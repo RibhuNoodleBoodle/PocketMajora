@@ -19,12 +19,12 @@ Candidate worker folder: gemini_flash/Gemini_Step_XX.txt
 ======================================================================
 CURRENT PROJECT STATE -- VERIFIED AT STAGE 4
 ======================================================================
-CURRENT STAGE: STEP 01 PASS -> STARTING STEP 02
-LAST COMPLETED: STEP 01 -- RUST PSP TOOLCHAIN BOOTSTRAP & MEMSIZE=1 EBOOT.PBP PROBE (2026-11-16)
-LAST ATTEMPTED: STEP 01 -- RUST PSP TOOLCHAIN BOOTSTRAP & EBOOT.PBP PROBE (PASS)
+CURRENT STAGE: STEP 02 PASS -> STARTING STEP 03
+LAST COMPLETED: STEP 02 -- WORKSPACE, PMM-SCHEMA, 333/166 MHZ CLOCKS, & PARTITION 2 POOLS (2026-11-16)
+LAST ATTEMPTED: STEP 02 -- WORKSPACE, PMM-SCHEMA, & PARTITION 2 SLAB ALLOCATOR (PASS)
 ACTIVE MODEL: Gemini Hydrogen (High)
 REPOSITORY ROOT: /mnt/6421-8598/building/PocketMajora
-BRANCH / GIT HEAD: main (tracking origin/main) / prior commit 4543785671ea5dc769361a4d974defa45494f29c
+BRANCH / GIT HEAD: main (tracking origin/main) / prior commit 99e8383b9c0aab8ed1ebf079656860e63e163d14
 DIRTY / UNCOMMITTED FILES:
   - Untracked source trees at root: `majora_code/` (2S2H v5.1.0), `psp_ref/` (z2442/mm-PSP)
   - Untracked prompt files: `Gemini_Argon_Medium_Rust_PSP3000_Master_Prompt.txt`, `Gemini_Resume_Medium_PSP_Rust.txt`
@@ -52,8 +52,8 @@ GIT COMMITS FOR THIS PROJECT:
   - `e01332bd5948c3a6ef222a1ac08c0d781a5505ee` (Stage 3 architecture, license audit, & CONDITIONAL GO gate)
   - `7942393604004d6cf775e59f76486d099d08d577` (Stage 4 initial Flash worker prompt suite Steps 02..10)
   - Stage 4 40 FPS / 25 ms optimization update commit: committed with updated `PSP_RUST_ARCHITECTURE.txt`, `FEASIBILITY_GATE.txt`, `Gemini_Step_02,03,05,06,09,10.txt`, `INDEX.txt`, and `handoff.txt`
-BUILD (EBOOT.PBP): PASS (Step 01 `target/mipsel-sony-psp/release/EBOOT.PBP`, 278 KiB, `MEMSIZE=1`)
-PPSSPP TEST: PASS (Step 01 Fat negative test `24,534,016` B -> `ERR(0x800200d9)`; Slim positive test `58,088,448` B -> `SLIM_16MIB_ALLOC: OK(0x09059400)`, 60 GU frames)
+BUILD (EBOOT.PBP): PASS (Step 02 `target/mipsel-sony-psp/release/EBOOT.PBP`, 250 KiB, `MEMSIZE=1`)
+PPSSPP TEST: PASS (Step 02 `CPU_BUS_CLOCK_MHZ: 333/166`, 4 Partition 2 pools 28 MiB `align_64=true`, `FREE_AFTER_28MIB_POOLS: 29015296`, `100` reset cycles `0` leak, `pmm-schema` 6/6 host tests)
 REAL PSP-3000 TEST: NOT RUN (awaiting hardware)
 
 ======================================================================
@@ -104,12 +104,12 @@ OWNER NEW INSTRUCTIONS / MANUAL OBSERVATIONS:
 ======================================================================
 AGENT CHECKPOINT (MODELS UPDATE THIS SECTION FREQUENTLY)
 ======================================================================
-What just happened: Completed Step 01 (`PASS`). Installed `nightly-2026-04-13` + `rust-src`, cloned `tools/rust-psp` @ `e4cc06f6`, patched `mksfo.rs` for `MEMSIZE`, built `EBOOT.PBP`, and verified both PPSSPP Fat (`24.5 MB` -> `0x800200d9`) and Slim (`58.1 MB` -> `16 MiB OK`, 60 GU frames) in `docs/research/01_step01_verification_log.txt`.
-Last checked source path: /mnt/6421-8598/building/PocketMajora/docs/research/01_step01_verification_log.txt
-Last verified command / output: PPSSPP Slim `boot_probe.log` -> `STATUS: PASS`, `INITIAL_TOTAL_FREE_BYTES: 58088448`, `SLIM_16MIB_ALLOC: OK(0x09059400)`.
-Modified files since last commit: `.gitignore`, `rust-toolchain.toml`, `Cargo.toml`, `Cargo.lock`, `Psp.toml`, `src/main.rs`, `scripts/build_eboot.sh`, `docs/research/01_step01_verification_log.txt`, `gemini_flash/INDEX.txt`, `handoff.txt`.
-Potential work loss if session ends now: NONE (committing Step 01 now).
-Exact next command/action: Execute `gemini_flash/Gemini_Step_02.txt` (Workspace, `pmm-schema`, 333/166 MHz clock lock, Partition 2 slab pools).
+What just happened: Completed Step 02 (`PASS`). Expanded root into Cargo workspace with `crates/pmm-schema` (6/6 host tests), `src/platform/{clock,memory,crash}.rs`, locked 333/166 MHz clocks, allocated 28 MiB Partition 2 pools, and verified 0-byte arena leak across 100 cycles (`docs/research/02_step02_verification_log.txt`).
+Last checked source path: /mnt/6421-8598/building/PocketMajora/docs/research/02_step02_verification_log.txt
+Last verified command / output: `./scripts/test_step02.sh` -> `STATUS: PASS`, `CPU_BUS_CLOCK_MHZ: 333/166`, `FREE_AFTER_28MIB_POOLS: 29015296`.
+Modified files since last commit: `Cargo.toml`, `Cargo.lock`, `crates/pmm-schema/*`, `src/platform/*`, `src/main.rs`, `scripts/test_step02.sh`, `docs/research/02_step02_verification_log.txt`, `gemini_flash/INDEX.txt`, `handoff.txt`.
+Potential work loss if session ends now: NONE (committing Step 02 now).
+Exact next command/action: Execute `gemini_flash/Gemini_Step_03.txt` (`tools/pmm-extractor`: ROM validation, Yaz0, XML parser, `pmm_2s2h.pak` + synthetic fixture).
 
 ======================================================================
 APPEND-ONLY CHANGE LOG
@@ -152,6 +152,11 @@ APPEND-ONLY CHANGE LOG
              @ `e4cc06f6` (with `mksfo` `MEMSIZE` DWORD patch). Built `EBOOT.PBP`
              (278 KiB) and verified in PPSSPP: Fat `24.5 MB` -> `0x800200d9`,
              Slim `58.1 MB` -> `16 MiB OK` + 60 GU frames (`01_step01_verification_log.txt`).
+2026-11-16 Gemini Hydrogen (High): Completed Step 02 (`PASS`). Added
+             `crates/pmm-schema` (6/6 host tests), `src/platform/{clock,memory,crash}.rs`,
+             locked 333/166 MHz clocks, allocated 28 MiB Partition 2 pools
+             (`29.0 MB` still free), and verified 0-byte leak over 100 resets
+             (`02_step02_verification_log.txt`).
 
 ======================================================================
 RECOVERY RULES (IF ARGON OR FLASH FAILS / TOKENS EXPIRE)

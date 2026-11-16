@@ -1,0 +1,42 @@
+======================================================================
+STEP 02 VERIFICATION LOG -- WORKSPACE, PMM-SCHEMA, 333/166 MHZ CLOCKS, & POOLS
+Date: 2026-11-16
+Verifier: Gemini Hydrogen (High)
+Repository Root: /mnt/6421-8598/building/PocketMajora
+======================================================================
+
+1. HOST UNIT TESTS (`crates/pmm-schema`)
+----------------------------------------------------------------------
+Command:
+  `cargo test --manifest-path crates/pmm-schema/Cargo.toml --target x86_64-unknown-linux-gnu`
+Result:
+  `6 passed; 0 failed`
+  - `tests::crc32_ieee_known_vector` ... ok
+  - `tests::gfx_word_vtx_mtx_sizes_and_opcodes` ... ok
+  - `tests::n64_mtx_fixed_point_conversion` ... ok
+  - `tests::otr_path_normalization_matches_stripped_hash` ... ok
+  - `tests::pak_entry_roundtrip_and_alignment_negative_check` ... ok
+  - `tests::pak_header_roundtrip_and_negative_checks` ... ok
+
+2. PPSSPP SLIM (`PSPModel = 1`, `MEMSIZE=1`) EXECUTION (`./scripts/test_step02.sh`)
+----------------------------------------------------------------------
+Actual `step02_probe.log` written by `EBOOT.PBP`:
+```
+STATUS: PASS
+CPU_BUS_CLOCK_MHZ: 333/166
+POOL_COMMON_6MIB: OK(addr=0x08813300, align_64=true)
+POOL_SCENE_8MIB: OK(addr=0x08e13300, align_64=true)
+POOL_RENDERER_6MIB: OK(addr=0x09613300, align_64=true)
+POOL_AUDIO_8MIB: OK(addr=0x09c13300, align_64=true)
+FREE_AFTER_28MIB_POOLS: 29015296
+NEGATIVE_OVERSIZE_48MIB_ALLOC: EXPECTED_ERR(0x800200d9)
+ARENA_100_RESET_CYCLES_LEAK_BYTES: 0
+PMM_SCHEMA_MAGIC_CHECK: true
+```
+Verification:
+- 333/166 MHz clock lock verified via `scePowerGetCpuClockFrequency` / `scePowerGetBusClockFrequency`.
+- All 4 Partition 2 blocks (28 MiB total) allocated with `align_64=true` and `29,015,296` bytes remaining free.
+- 48 MiB negative allocation cleanly returned `0x800200d9` (`ENOMEM`).
+- 100 Scene + Room reset cycles produced `0` leaked bytes.
+- Real PSP-3000 hardware test: NOT RUN.
+======================================================================

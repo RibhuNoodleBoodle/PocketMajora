@@ -1,3 +1,21 @@
+[workspace]
+resolver = "2"
+members = [
+    ".",
+    "crates/pmm-schema",
+]
+exclude = ["tools/rust-psp"]
+
+[workspace.package]
+version = "1.0.0"
+edition = "2024"
+license = "CC0-1.0"
+repository = "https://github.com/RibhuNoodleBoodle/PocketMajora"
+authors = ["PocketMajora Contributors"]
+
+[workspace.lints.clippy]
+[workspace.lints.rust]
+
 [package]
 name = "pocket-majora"
 version = "0.1.0"
@@ -5,6 +23,7 @@ edition = "2024"
 
 [dependencies]
 psp = { path = "tools/rust-psp/psp" }
+pmm-schema = { path = "crates/pmm-schema" }
 
 [patch.crates-io]
 unicode-width = { git = "https://git.sr.ht/~sajattack/unicode-width" }
