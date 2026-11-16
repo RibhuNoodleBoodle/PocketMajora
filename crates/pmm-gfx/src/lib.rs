@@ -143,6 +143,7 @@ pub struct Renderer {
     combine_uses_shade: bool,
     combine_uses_prim: bool,
     overlay_mode: bool,
+    tex_namespace: u64,
     static_list_tris: Vec<(u64, u64)>,
     pub stats: RenderStats,
 }
@@ -182,9 +183,32 @@ impl Renderer {
             combine_uses_shade: true,
             combine_uses_prim: false,
             overlay_mode: false,
+            tex_namespace: 0,
             static_list_tris: Vec::new(),
             stats: RenderStats::default(),
         }
+    }
+
+    pub fn set_tex_namespace(&mut self, ns: u64) {
+        self.tex_namespace = ns;
+    }
+
+    pub fn push_model_matrix<B: GfxBackend>(&mut self, mtx: &Mat4, backend: &mut B) -> Result<(), GfxError> {
+        if self.mtx_stack.len() >= MAX_MTX_STACK {
+            return Err(GfxError::MatrixStackOverflow);
+        }
+        self.mtx_stack.push(*mtx);
+        backend.set_model_matrix(mtx);
+        Ok(())
+    }
+
+    pub fn pop_model_matrix<B: GfxBackend>(&mut self, backend: &mut B) -> Result<(), GfxError> {
+        if self.mtx_stack.len() <= 1 {
+            return Err(GfxError::MatrixStackUnderflow);
+        }
+        self.mtx_stack.pop();
+        backend.set_model_matrix(self.mtx_stack.last().unwrap());
+        Ok(())
     }
 
     pub fn begin_frame(&mut self) {
@@ -563,9 +587,16 @@ impl Renderer {
                         let lrt = (cmd.w1 & 0xFFF) >> 2;
                         let w = (lrs.saturating_sub(uls) + 1) as u16;
                         let h = (lrt.saturating_sub(ult) + 1) as u16;
-                        let key = ((self.tile_fmt as u64) << 40)
-                            | ((self.tile_siz as u64) << 32)
-                            | (self.timg_addr as u64);
+                        let tlut_sig = if self.tile_fmt == gbi::G_IM_FMT_CI {
+                            (self.tlut_rgba[0] ^ self.tlut_rgba[1].rotate_left(13)) as u64
+                        } else {
+                            0
+                        };
+                        let key = self.tex_namespace.wrapping_mul(0x9E37_79B9_7F4A_7C15)
+                            ^ (tlut_sig << 16)
+                            ^ ((self.tile_fmt as u64) << 40)
+                            ^ ((self.tile_siz as u64) << 32)
+                            ^ (self.timg_addr as u64);
                         self.flush_triangles(&mut tri_batch, backend);
                         if self.state.bound_rom_tex == Some(key) {
                             self.apply_texture_enabled(true, backend);

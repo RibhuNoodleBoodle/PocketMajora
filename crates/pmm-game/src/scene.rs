@@ -2,6 +2,7 @@ use alloc::vec::Vec;
 use pmm_assets::{BoundedArena, PakSource, ResourceManager, SegmentTable};
 
 use crate::actors::ActorInstance;
+use crate::assets_rom::RomVisualBank;
 use crate::bgcheck::CollisionMesh;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -59,6 +60,7 @@ impl SceneId {
 pub struct SceneHeaderInfo {
     pub commands_executed: u32,
     pub num_spawns: u8,
+    pub spawn0: Option<[f32; 3]>,
     pub num_rooms: u8,
     pub num_actors: u8,
     pub col_header_off: Option<usize>,
@@ -85,7 +87,18 @@ pub fn otr_scene_execute_commands(seg2_bytes: &[u8]) -> SceneHeaderInfo {
         info.commands_executed += 1;
 
         match code {
-            0x00 => info.num_spawns = data1, // SCENE_CMD_ID_SPAWN_LIST
+            0x00 => {
+                info.num_spawns = data1;
+                if (w1 >> 24) == 0x02 {
+                    let off = (w1 & 0x00FF_FFFF) as usize;
+                    if off + 8 <= seg2_bytes.len() {
+                        let x = i16::from_be_bytes([seg2_bytes[off + 2], seg2_bytes[off + 3]]) as f32;
+                        let y = i16::from_be_bytes([seg2_bytes[off + 4], seg2_bytes[off + 5]]) as f32;
+                        let z = i16::from_be_bytes([seg2_bytes[off + 6], seg2_bytes[off + 7]]) as f32;
+                        info.spawn0 = Some([x, y, z]);
+                    }
+                }
+            }
             0x01 => info.num_actors = data1, // SCENE_CMD_ID_ACTOR_LIST
             0x03 => {
                 // SCENE_CMD_ID_COL_HEADER (segment 0x02 relative)
@@ -209,7 +222,7 @@ pub struct ActiveScene {
 }
 
 impl ActiveScene {
-    pub fn build_segment_table(&self) -> SegmentTable {
+    pub fn build_segment_table(&self, bank: &RomVisualBank) -> SegmentTable {
         let mut segs = SegmentTable::new(0x8000_0000, 0x8080_0000);
         if !self.seg2_ptr.is_null() && self.seg2_len > 0 {
             let s2 = unsafe { core::slice::from_raw_parts(self.seg2_ptr, self.seg2_len) };
@@ -219,54 +232,56 @@ impl ActiveScene {
             let s3 = unsafe { core::slice::from_raw_parts(self.seg3_ptr, self.seg3_len) };
             let _ = segs.set_segment(0x03, s3);
         }
+        if let Some(gk) = bank.gameplay_keep.as_slice() {
+            let _ = segs.set_segment(0x04, gk);
+        }
+        if let Some(fk) = bank.gameplay_field_keep.as_slice() {
+            let _ = segs.set_segment(0x05, fk);
+        }
         segs
     }
 }
 
-/// Build playable Clock Town / Inside Tower collision geometry & spawn points, augmenting
-/// parsed ROM `CollisionHeader` when running real assets or providing full coverage on synthetic tests.
-fn build_playable_slice_collision(scene: SceneId) -> (CollisionMesh, [f32; 3]) {
+/// Build playable Clock Town / Inside Tower collision anchored at the scene spawn origin
+/// so Link stands directly on the real 3D ROM room coordinates.
+fn build_playable_slice_collision(scene: SceneId, origin: [f32; 3]) -> CollisionMesh {
     let mut mesh = CollisionMesh::default();
+    let [ox, oy, oz] = origin;
     match scene {
         SceneId::InsideTower => {
-            // Main floor + exit doorway mat at z = 140..190 -> Exit 1 (South Clock Town)
-            mesh.add_floor_quad(-180.0, -180.0, 180.0, 140.0, 0.0, None);
-            mesh.add_floor_quad(-45.0, 140.0, 45.0, 190.0, 0.0, Some(1));
-            mesh.add_wall_quad(-180.0, -180.0, 180.0, -180.0, 0.0, 120.0);
-            mesh.add_wall_quad(180.0, -180.0, 180.0, 190.0, 0.0, 120.0);
-            mesh.add_wall_quad(-180.0, 190.0, -180.0, -180.0, 0.0, 120.0);
-            (mesh, [0.0, 0.0, 0.0])
+            mesh.add_floor_quad(ox - 180.0, oz - 180.0, ox + 180.0, oz + 140.0, oy, None);
+            mesh.add_floor_quad(ox - 45.0, oz + 140.0, ox + 45.0, oz + 190.0, oy, Some(1));
+            mesh.add_wall_quad(ox - 180.0, oz - 180.0, ox + 180.0, oz - 180.0, oy, oy + 120.0);
+            mesh.add_wall_quad(ox + 180.0, oz - 180.0, ox + 180.0, oz + 190.0, oy, oy + 120.0);
+            mesh.add_wall_quad(ox - 180.0, oz + 190.0, ox - 180.0, oz - 180.0, oy, oy + 120.0);
+            mesh
         }
         SceneId::SouthClockTown | SceneId::ClockTower => {
-            // Large Clock Town plaza floor + sloped ramp + exit doorway + perimeter walls
-            mesh.add_floor_quad(-420.0, -420.0, 420.0, 420.0, 0.0, None);
-            // Sloped Clock Tower ramp leading up toward north archway (CCW upward normal)
+            mesh.add_floor_quad(ox - 420.0, oz - 460.0, ox + 420.0, oz + 380.0, oy, None);
             mesh.add_triangle(
-                [-80.0, 0.0, -180.0],
-                [80.0, 40.0, -320.0],
-                [-80.0, 40.0, -320.0],
+                [ox - 80.0, oy, oz - 220.0],
+                [ox + 80.0, oy + 40.0, oz - 360.0],
+                [ox - 80.0, oy + 40.0, oz - 360.0],
                 None,
             );
             mesh.add_triangle(
-                [-80.0, 0.0, -180.0],
-                [80.0, 0.0, -180.0],
-                [80.0, 40.0, -320.0],
+                [ox - 80.0, oy, oz - 220.0],
+                [ox + 80.0, oy, oz - 220.0],
+                [ox + 80.0, oy + 40.0, oz - 360.0],
                 None,
             );
-            // Exit mat back into Clock Tower Interior
-            mesh.add_floor_quad(-45.0, -360.0, 45.0, -320.0, 40.0, Some(2));
-            // Plaza boundary walls
-            mesh.add_wall_quad(-420.0, -420.0, 420.0, -420.0, 0.0, 200.0);
-            mesh.add_wall_quad(420.0, -420.0, 420.0, 420.0, 0.0, 200.0);
-            mesh.add_wall_quad(420.0, 420.0, -420.0, 420.0, 0.0, 200.0);
-            mesh.add_wall_quad(-420.0, 420.0, -420.0, -420.0, 0.0, 200.0);
-            (mesh, [0.0, 0.0, 40.0])
+            mesh.add_floor_quad(ox - 45.0, oz - 400.0, ox + 45.0, oz - 360.0, oy + 40.0, Some(2));
+            mesh.add_wall_quad(ox - 420.0, oz - 460.0, ox + 420.0, oz - 460.0, oy, oy + 200.0);
+            mesh.add_wall_quad(ox + 420.0, oz - 460.0, ox + 420.0, oz + 380.0, oy, oy + 200.0);
+            mesh.add_wall_quad(ox + 420.0, oz + 380.0, ox - 420.0, oz + 380.0, oy, oy + 200.0);
+            mesh.add_wall_quad(ox - 420.0, oz + 380.0, ox - 420.0, oz - 460.0, oy, oy + 200.0);
+            mesh
         }
         _ => {
-            mesh.add_floor_quad(-300.0, -300.0, 300.0, 300.0, 0.0, None);
-            mesh.add_floor_quad(-40.0, 260.0, 40.0, 300.0, 0.0, Some(1));
-            mesh.add_wall_quad(-300.0, -300.0, 300.0, -300.0, 0.0, 160.0);
-            (mesh, [0.0, 0.0, 0.0])
+            mesh.add_floor_quad(ox - 300.0, oz - 300.0, ox + 300.0, oz + 300.0, oy, None);
+            mesh.add_floor_quad(ox - 40.0, oz + 260.0, ox + 40.0, oz + 300.0, oy, Some(1));
+            mesh.add_wall_quad(ox - 300.0, oz - 300.0, ox + 300.0, oz - 300.0, oy, oy + 160.0);
+            mesh
         }
     }
 }
@@ -304,10 +319,14 @@ pub fn otr_play_spawn_scene<S: PakSource>(
         room_dls = otr_room_extract_dls(seg3_bytes);
     }
 
-    let (collision, spawn_pos) = build_playable_slice_collision(scene);
+    let spawn_pos = header.spawn0.unwrap_or(match scene {
+        SceneId::SouthClockTown | SceneId::ClockTower => [0.0, 0.0, 40.0],
+        _ => [0.0, 0.0, 0.0],
+    });
+    let collision = build_playable_slice_collision(scene, spawn_pos);
     let rom_col_polys = parsed_rom_col.map(|m| m.polys.len()).unwrap_or(0);
 
-    let actors = ActorInstance::spawn_for_scene(scene);
+    let actors = ActorInstance::spawn_for_scene(scene, spawn_pos);
     let arena_used_after_spawn = arena.used_bytes();
 
     ActiveScene {

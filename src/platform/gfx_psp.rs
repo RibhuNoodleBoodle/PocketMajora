@@ -495,13 +495,13 @@ impl GfxBackend for PspGfxBackend {
     }
 
     fn begin_compile_static_list(&mut self, _list_id: u64) -> bool {
-        const CMD_RESERVE: usize = 64 * 1024;
+        const CMD_RESERVE: usize = 8 * 1024;
         let aligned = (self.static_cursor + 63) & !63;
-        if aligned + CMD_RESERVE + 64 * 1024 > STATIC_CACHE_OFFSET + STATIC_CACHE_BYTES {
+        if aligned + CMD_RESERVE + 16 * 1024 > STATIC_CACHE_OFFSET + STATIC_CACHE_BYTES {
             return false;
         }
         let ptr = unsafe { self.pool_base.add(aligned) };
-        // Advance `static_cursor` past the reserved 64 KiB command buffer so vertices
+        // Advance `static_cursor` past the reserved 8 KiB command buffer so vertices
         // written via `alloc_in_static` never overlap the active GE Call list!
         self.static_cursor = aligned + CMD_RESERVE;
         self.compiling_list_start = Some(ptr);
@@ -516,7 +516,7 @@ impl GfxBackend for PspGfxBackend {
             return;
         };
         let written = unsafe { sys::sceGuFinish() }.max(0) as usize;
-        let clamped_written = written.min(64 * 1024);
+        let clamped_written = written.min(8 * 1024);
         unsafe {
             sceKernelDcacheWritebackInvalidateRange(start as *const c_void, clamped_written as u32);
         }

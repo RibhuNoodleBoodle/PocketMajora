@@ -42,13 +42,14 @@ impl ActorInstance {
         }
     }
 
-    pub fn spawn_for_scene(scene: SceneId) -> Vec<Self> {
+    pub fn spawn_for_scene(scene: SceneId, origin: [f32; 3]) -> Vec<Self> {
+        let [ox, oy, oz] = origin;
         match scene {
             SceneId::InsideTower => alloc::vec![
                 Self {
                     id: 0xAC01,
                     kind: ActorKind::HappyMaskSalesman,
-                    pos: [0.0, 0.0, -70.0],
+                    pos: [ox, oy, oz - 70.0],
                     yaw: 0.0,
                     radius: 36.0,
                     interacted: false,
@@ -57,7 +58,7 @@ impl ActorInstance {
                 Self {
                     id: 0xAC02,
                     kind: ActorKind::ClockTowerDoor,
-                    pos: [0.0, 0.0, 155.0],
+                    pos: [ox, oy, oz + 155.0],
                     yaw: 3.14159,
                     radius: 42.0,
                     interacted: false,
@@ -66,7 +67,7 @@ impl ActorInstance {
                 Self {
                     id: 0xAC03,
                     kind: ActorKind::Tatl,
-                    pos: [18.0, 32.0, 10.0],
+                    pos: [ox + 18.0, oy + 32.0, oz + 10.0],
                     yaw: 0.0,
                     radius: 16.0,
                     interacted: false,
@@ -77,7 +78,7 @@ impl ActorInstance {
                 Self {
                     id: 0xBC01,
                     kind: ActorKind::OwlSaveStatue,
-                    pos: [95.0, 0.0, 75.0],
+                    pos: [ox + 95.0, oy, oz + 35.0],
                     yaw: 0.0,
                     radius: 40.0,
                     interacted: false,
@@ -86,7 +87,7 @@ impl ActorInstance {
                 Self {
                     id: 0xBC02,
                     kind: ActorKind::ClockTowerDoor,
-                    pos: [0.0, 40.0, -335.0],
+                    pos: [ox, oy + 40.0, oz - 375.0],
                     yaw: 0.0,
                     radius: 45.0,
                     interacted: false,
@@ -95,7 +96,7 @@ impl ActorInstance {
                 Self {
                     id: 0xBC03,
                     kind: ActorKind::Banker,
-                    pos: [-120.0, 0.0, 40.0],
+                    pos: [ox - 120.0, oy, oz],
                     yaw: 1.57,
                     radius: 36.0,
                     interacted: false,
@@ -104,7 +105,7 @@ impl ActorInstance {
                 Self {
                     id: 0xBC04,
                     kind: ActorKind::Postbox,
-                    pos: [150.0, 0.0, -20.0],
+                    pos: [ox + 150.0, oy, oz - 60.0],
                     yaw: 0.0,
                     radius: 28.0,
                     interacted: false,
@@ -113,7 +114,7 @@ impl ActorInstance {
                 Self {
                     id: 0xBC05,
                     kind: ActorKind::Guard,
-                    pos: [0.0, 0.0, 260.0],
+                    pos: [ox, oy, oz + 220.0],
                     yaw: 3.14159,
                     radius: 36.0,
                     interacted: false,
@@ -122,7 +123,7 @@ impl ActorInstance {
                 Self {
                     id: 0xBC06,
                     kind: ActorKind::CollectibleRupee,
-                    pos: [40.0, 0.0, 20.0],
+                    pos: [ox + 40.0, oy, oz - 20.0],
                     yaw: 0.0,
                     radius: 28.0,
                     interacted: false,
@@ -131,7 +132,7 @@ impl ActorInstance {
                 Self {
                     id: 0xBC07,
                     kind: ActorKind::CollectibleHeart,
-                    pos: [-40.0, 0.0, 20.0],
+                    pos: [ox - 40.0, oy, oz - 20.0],
                     yaw: 0.0,
                     radius: 28.0,
                     interacted: false,
@@ -140,7 +141,7 @@ impl ActorInstance {
                 Self {
                     id: 0xBC08,
                     kind: ActorKind::Tatl,
-                    pos: [12.0, 34.0, 48.0],
+                    pos: [ox + 12.0, oy + 34.0, oz + 8.0],
                     yaw: 0.0,
                     radius: 16.0,
                     interacted: false,
@@ -150,7 +151,7 @@ impl ActorInstance {
             _ => alloc::vec![Self {
                 id: 0xCC01,
                 kind: ActorKind::Guard,
-                pos: [0.0, 0.0, -80.0],
+                pos: [ox, oy, oz - 80.0],
                 yaw: 0.0,
                 radius: 36.0,
                 interacted: false,

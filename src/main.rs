@@ -10,6 +10,7 @@ use pmm_assets::ResourceManager;
 use pmm_gfx::Renderer;
 use pmm_gfx::math::{mat4_identity, mat4_ortho};
 use pmm_gfx::vfpu::verify_vfpu_equivalence;
+use pmm_game::assets_rom::RomVisualBank;
 use pmm_game::clock::ClockEvent;
 use pmm_game::graph::{FRAME_40FPS_USEC, GameStateId, NoCatchUpPacer};
 use pmm_game::interp::FrameInterpolator;
@@ -100,9 +101,11 @@ fn psp_main() {
     // Phase 1: TitleSetup -> ConsoleLogo -> FileSelect (Create Slot0 + Launch) -> DayTelop
     // -------------------------------------------------------------------------
     let mut title_setup = TitleSetupState::new();
-    let (_init_save, msgs, state1) = {
+    let (_init_save, msgs, state1, visual_bank) = {
         let mut common = pools.common_arena_mut();
-        title_setup.update(&mut flash, &mut mgr, &mut common)
+        let (s, m, st) = title_setup.update(&mut flash, &mut mgr, &mut common);
+        let bank = RomVisualBank::load(&mut mgr, &mut common);
+        (s, m, st, bank)
     };
     let mut flow_ok = state1 == GameStateId::Title;
 
@@ -116,7 +119,7 @@ fn psp_main() {
         for &frac in &[0.5f32, 1.0f32] {
             let t0 = unsafe { sys::sceKernelGetSystemTimeLow() };
             gfx.begin_frame(0xFF10_0804, &proj, &view);
-            logo.draw_frame(&mut pool, &mut renderer, &mut mgr, &mut gfx, &mut interp, frac);
+            logo.draw_frame_with_bank(&visual_bank, &mut pool, &mut renderer, &mut mgr, &mut gfx, &mut interp, frac);
             gfx.end_frame_and_swap(settings.vsync);
             let _ = pace_and_account(&mut pacer, t0);
         }
@@ -138,7 +141,7 @@ fn psp_main() {
         for &frac in &[0.5f32, 1.0f32] {
             let t0 = unsafe { sys::sceKernelGetSystemTimeLow() };
             gfx.begin_frame(0xFF30_1808, &proj, &view);
-            file_select.draw_frame(&mut pool, &mut renderer, &mut mgr, &mut gfx, &mut interp, frac);
+            file_select.draw_frame_with_bank(&visual_bank, &mut pool, &mut renderer, &mut mgr, &mut gfx, &mut interp, frac);
             gfx.end_frame_and_swap(settings.vsync);
             let _ = pace_and_account(&mut pacer, t0);
         }
@@ -195,6 +198,7 @@ fn psp_main() {
         let mut scene_arena = pools.scene_arena_mut();
         PlayState::enter(SceneId::InsideTower, active_save, &mut scene_arena, &mut mgr)
     };
+    play.attach_skeletons(&visual_bank);
 
     let mut deku_to_human = false;
     let mut spawned_town = false;
@@ -221,14 +225,16 @@ fn psp_main() {
             if !deku_to_human && tick == 38 {
                 buttons |= n64_btn::R_CBUTTONS;
             } else if !owl_saved && owl_ticks < 24 {
-                if play.player.pos[0] < 88.0 {
+                let owl_x = play.scene.spawn_pos[0] + 95.0;
+                let owl_z = play.scene.spawn_pos[2] + 35.0;
+                if play.player.pos[0] < owl_x - 7.0 {
                     sx = 80;
                 }
-                if play.player.pos[2] < 70.0 {
+                if play.player.pos[2] < owl_z - 5.0 {
                     sy = -60;
                 }
-                if (play.player.pos[0] - 95.0).abs() <= 24.0
-                    && (play.player.pos[2] - 75.0).abs() <= 24.0
+                if (play.player.pos[0] - owl_x).abs() <= 24.0
+                    && (play.player.pos[2] - owl_z).abs() <= 24.0
                 {
                     buttons |= n64_btn::A_BUTTON;
                 }
@@ -286,11 +292,11 @@ fn psp_main() {
 
         let proj_3d = play.camera.build_perspective_proj(settings.aspect_ratio_16_9);
         let view_3d_0 = play.camera.build_view_matrix(&mut interp, 0.5);
-        gfx.begin_frame(0xFF38_2818, &proj_3d, &view_3d_0);
+        gfx.begin_frame(0xFF48_3018, &proj_3d, &view_3d_0);
         renderer.begin_frame();
-        play.draw_3d_world(0.5, &mut pool, &mut renderer, &mut mgr, &mut gfx, &mut interp);
+        play.draw_3d_world_with_bank(&visual_bank, 0.5, &mut pool, &mut renderer, &mut mgr, &mut gfx, &mut interp);
         gfx.set_matrices(&proj, &view);
-        play.draw_2d_overlay(&mut pool, &mut renderer, &mut mgr, &mut gfx);
+        play.draw_2d_overlay_with_bank(&visual_bank, &mut pool, &mut renderer, &mut mgr, &mut gfx);
         gfx.end_frame_and_swap(settings.vsync);
         let p0_work = measure_elapsed_us(p0_start);
         pass0_work_sum_us += p0_work as u64;
@@ -300,11 +306,11 @@ fn psp_main() {
         // --- Pass 1: Pure Matrix-Interpolated Presentation (fraction = 1.0) ---
         let p1_start = unsafe { sys::sceKernelGetSystemTimeLow() };
         let view_3d_1 = play.camera.build_view_matrix(&mut interp, 1.0);
-        gfx.begin_frame(0xFF38_2818, &proj_3d, &view_3d_1);
+        gfx.begin_frame(0xFF48_3018, &proj_3d, &view_3d_1);
         renderer.begin_frame();
-        play.draw_3d_world(1.0, &mut pool, &mut renderer, &mut mgr, &mut gfx, &mut interp);
+        play.draw_3d_world_with_bank(&visual_bank, 1.0, &mut pool, &mut renderer, &mut mgr, &mut gfx, &mut interp);
         gfx.set_matrices(&proj, &view);
-        play.draw_2d_overlay(&mut pool, &mut renderer, &mut mgr, &mut gfx);
+        play.draw_2d_overlay_with_bank(&visual_bank, &mut pool, &mut renderer, &mut mgr, &mut gfx);
         gfx.end_frame_and_swap(settings.vsync);
         let p1_work = measure_elapsed_us(p1_start);
         pass1_work_sum_us += p1_work as u64;

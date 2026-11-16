@@ -4,6 +4,7 @@ use pmm_gfx::math::mat4_identity;
 use pmm_gfx::{GfxBackend, Renderer};
 use pmm_schema::{GfxWord, N64Vtx, gbi};
 
+use crate::assets_rom::{RomVisualBank, draw_rom_sprite};
 use crate::graph::GameStateId;
 use crate::interp::FrameInterpolator;
 use crate::padmgr::{PadInput, n64_btn};
@@ -304,8 +305,9 @@ impl ConsoleLogoState {
         }
     }
 
-    pub fn draw_frame<S: PakSource, B: GfxBackend>(
+    pub fn draw_frame_with_bank<S: PakSource, B: GfxBackend>(
         &self,
+        bank: &RomVisualBank,
         pool: &mut GfxPool,
         renderer: &mut Renderer,
         res: &mut ResourceManager<S>,
@@ -318,9 +320,47 @@ impl ConsoleLogoState {
         let lerped = interp.resolve(0x5449_544C, 0, &target, fraction);
         let alpha = lerped[3][0].clamp(0.0, 255.0) as u8;
 
-        // N64 logo / Ship emblem backdrop quad + cover fade quad via F3DEX2
-        render_f3dex2_quad_layer(pool, renderer, res, backend, -120, -60, 120, 60, [32, 64, 180, 255]);
-        render_f3dex2_quad_layer(pool, renderer, res, backend, -160, -120, 160, 120, [0, 0, 0, alpha]);
+        // Majora's Mask night-sky backdrop + authentic EnMag title compositing (`z_en_mag.c`)
+        render_f3dex2_quad_layer(pool, renderer, res, backend, -240, -136, 240, 136, [14, 8, 28, 255]);
+        if let Some(mask) = &bank.title_mask {
+            draw_rom_sprite(mask, -96.0, -56.0, 96.0, 112.0, [255, 255, 255, 255], renderer, backend);
+        } else {
+            render_f3dex2_quad_layer(pool, renderer, res, backend, -120, -60, 120, 60, [32, 64, 180, 255]);
+        }
+        if let Some(zelda) = &bank.title_zelda {
+            draw_rom_sprite(zelda, -108.0, -24.0, 108.0, 72.0, [255, 255, 255, 255], renderer, backend);
+        }
+        if let Some(leg) = &bank.title_legend_of {
+            draw_rom_sprite(leg, -54.0, 74.0, 54.0, 86.0, [208, 102, 222, 255], renderer, backend);
+        }
+        if let Some(sub_mask) = &bank.title_subtitle_mask {
+            draw_rom_sprite(sub_mask, -78.0, -52.0, 78.0, -28.0, [0, 0, 0, 220], renderer, backend);
+        }
+        if let Some(sub) = &bank.title_subtitle {
+            draw_rom_sprite(sub, -78.0, -52.0, 78.0, -28.0, [208, 102, 222, 255], renderer, backend);
+        }
+        if let Some(rogo) = &bank.rogo_text {
+            draw_rom_sprite(rogo, -96.0, -104.0, 96.0, -82.0, [220, 230, 255, 220], renderer, backend);
+        }
+        if let Some(copy) = &bank.title_copyright {
+            draw_rom_sprite(copy, -80.0, -126.0, 80.0, -106.0, [220, 220, 220, 235], renderer, backend);
+        }
+
+        // Smooth N64 coverAlpha black curtain
+        render_f3dex2_quad_layer(pool, renderer, res, backend, -240, -136, 240, 136, [0, 0, 0, alpha]);
+    }
+
+    pub fn draw_frame<S: PakSource, B: GfxBackend>(
+        &self,
+        pool: &mut GfxPool,
+        renderer: &mut Renderer,
+        res: &mut ResourceManager<S>,
+        backend: &mut B,
+        interp: &mut FrameInterpolator,
+        fraction: f32,
+    ) {
+        let empty = RomVisualBank::default();
+        self.draw_frame_with_bank(&empty, pool, renderer, res, backend, interp, fraction);
     }
 }
 
@@ -678,8 +718,9 @@ impl FileSelectState {
         next
     }
 
-    pub fn draw_frame<S: PakSource, B: GfxBackend>(
+    pub fn draw_frame_with_bank<S: PakSource, B: GfxBackend>(
         &self,
+        bank: &RomVisualBank,
         pool: &mut GfxPool,
         renderer: &mut Renderer,
         res: &mut ResourceManager<S>,
@@ -690,11 +731,60 @@ impl FileSelectState {
         let mut target = mat4_identity();
         target[3][1] = (self.selected_slot as f32) * 32.0;
         let lerped = interp.resolve(0x4649_4C45, 0, &target, fraction);
-        let cursor_y = lerped[3][1] as i16 - 48;
+        let cursor_y = 42.0 - lerped[3][1];
 
-        // Blue/Gold File Select panel + interpolated cursor quad via F3DEX2
-        render_f3dex2_quad_layer(pool, renderer, res, backend, -140, -90, 140, 90, [24, 48, 128, 255]);
-        render_f3dex2_quad_layer(pool, renderer, res, backend, -110, cursor_y, 110, cursor_y + 22, [220, 185, 64, 220]);
+        // Atmospheric Mask backdrop + File Select frame
+        render_f3dex2_quad_layer(pool, renderer, res, backend, -240, -136, 240, 136, [18, 18, 52, 255]);
+        if let Some(mask) = &bank.title_mask {
+            draw_rom_sprite(mask, -110.0, -90.0, 110.0, 90.0, [255, 255, 255, 85], renderer, backend);
+        }
+        render_f3dex2_quad_layer(pool, renderer, res, backend, -155, -88, 155, 92, [28, 56, 148, 215]);
+        // Interpolated File Select cursor bar
+        render_f3dex2_quad_layer(
+            pool,
+            renderer,
+            res,
+            backend,
+            -120,
+            (cursor_y - 12.0) as i16,
+            120,
+            (cursor_y + 12.0) as i16,
+            [235, 195, 55, 200],
+        );
+
+        if let Some(prompt) = &bank.fs_prompt {
+            draw_rom_sprite(prompt, -96.0, 64.0, 96.0, 86.0, [255, 240, 175, 255], renderer, backend);
+        }
+        let slot_sprites = [&bank.fs_file1, &bank.fs_file2, &bank.fs_file3];
+        for (i, sp) in slot_sprites.iter().enumerate() {
+            if let Some(s) = sp {
+                let y = 42.0 - (i as f32) * 32.0;
+                let tint = if self.slot_valid[i] { [255, 255, 255, 255] } else { [180, 190, 210, 210] };
+                draw_rom_sprite(s, -110.0, y - 10.0, -34.0, y + 10.0, tint, renderer, backend);
+            }
+        }
+        if let Some(copy) = &bank.fs_copy {
+            draw_rom_sprite(copy, -120.0, -80.0, -52.0, -60.0, [255, 255, 255, 255], renderer, backend);
+        }
+        if let Some(erase) = &bank.fs_erase {
+            draw_rom_sprite(erase, -34.0, -80.0, 34.0, -60.0, [255, 255, 255, 255], renderer, backend);
+        }
+        if let Some(opts) = &bank.fs_options {
+            draw_rom_sprite(opts, 52.0, -80.0, 120.0, -60.0, [255, 255, 255, 255], renderer, backend);
+        }
+    }
+
+    pub fn draw_frame<S: PakSource, B: GfxBackend>(
+        &self,
+        pool: &mut GfxPool,
+        renderer: &mut Renderer,
+        res: &mut ResourceManager<S>,
+        backend: &mut B,
+        interp: &mut FrameInterpolator,
+        fraction: f32,
+    ) {
+        let empty = RomVisualBank::default();
+        self.draw_frame_with_bank(&empty, pool, renderer, res, backend, interp, fraction);
     }
 }
 

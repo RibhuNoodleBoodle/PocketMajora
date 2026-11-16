@@ -2,7 +2,8 @@ use pmm_assets::{BoundedArena, PakSource, ResourceManager};
 use pmm_gfx::math::mat4_identity;
 use pmm_gfx::{GfxBackend, Renderer};
 
-use crate::actors::{ActorStepOutcome, update_actors};
+use crate::actors::{ActorKind, ActorStepOutcome, update_actors};
+use crate::assets_rom::RomVisualBank;
 use crate::camera::Camera;
 use crate::clock::{ClockEvent, ThreeDayClock};
 use crate::graph::GameStateId;
@@ -12,6 +13,7 @@ use crate::padmgr::{PadInput, n64_btn};
 use crate::player::{OcarinaSong, PLAYER_ENTITY_ID, Player, PlayerForm};
 use crate::save::{FlashIo, SaveContext, SysFlashrom};
 use crate::scene::{ActiveScene, SceneId, otr_play_spawn_scene};
+use crate::skel::{ParsedSkeleton, draw_rom_skeleton_actor, parse_flex_skeleton};
 use crate::thga::GfxPool;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -35,6 +37,9 @@ pub struct PlayState {
     pub max_letterbox_bar_px: u16,
     pub scene_leak_bytes_max: isize,
     baseline_scene_arena_used: Option<usize>,
+    pub human_skel: Option<ParsedSkeleton>,
+    pub deku_skel: Option<ParsedSkeleton>,
+    pub owl_skel: Option<ParsedSkeleton>,
 }
 
 impl PlayState {
@@ -65,6 +70,21 @@ impl PlayState {
             max_letterbox_bar_px: 0,
             scene_leak_bytes_max: 0,
             baseline_scene_arena_used,
+            human_skel: None,
+            deku_skel: None,
+            owl_skel: None,
+        }
+    }
+
+    pub fn attach_skeletons(&mut self, bank: &RomVisualBank) {
+        if let Some(hc) = bank.object_link_child.as_slice() {
+            self.human_skel = parse_flex_skeleton(hc, 0x1E244, true);
+        }
+        if let Some(dn) = bank.object_link_nuts.as_slice() {
+            self.deku_skel = parse_flex_skeleton(dn, 0xBA24, true);
+        }
+        if let Some(ow) = bank.object_owl.as_slice() {
+            self.owl_skel = parse_flex_skeleton(ow, 0xC5F8, false);
         }
     }
 
@@ -183,8 +203,9 @@ impl PlayState {
         }
     }
 
-    pub fn draw_3d_world<S: PakSource, B: GfxBackend>(
+    pub fn draw_3d_world_with_bank<S: PakSource, B: GfxBackend>(
         &self,
+        bank: &RomVisualBank,
         fraction: f32,
         pool: &mut GfxPool,
         renderer: &mut Renderer,
@@ -203,11 +224,12 @@ impl PlayState {
             );
         }
 
-        // 1. Real N64 big-endian Room Display Lists (`RoomShapeNormal`/`RoomShapeCullable`)
+        // 1. Real N64 big-endian Room Display Lists (`seg 0x02`, `0x03`, `0x04` keep, `0x05` field_keep)
         if !self.scene.room_dls.is_empty() {
-            let segs = self.scene.build_segment_table();
+            let segs = self.scene.build_segment_table(bank);
             let mut tex_scratch = [0u8; 64];
             let scene_tag = (self.scene.id as u64) << 48;
+            renderer.set_tex_namespace(self.scene.id as u64 + 1);
             for (idx, entry) in self.scene.room_dls.iter().enumerate() {
                 if entry.opa_dl != 0 {
                     let list_id = scene_tag | ((idx as u64) << 33) | (entry.opa_dl as u64);
@@ -234,9 +256,10 @@ impl PlayState {
                     );
                 }
             }
+            renderer.set_tex_namespace(0);
         }
 
-        // 2. 3D world-space markers for Link & interactive Clock Town actors
+        // 2. Render Real 3D Skeletal Link (`gLinkHumanSkel` / `gLinkDekuSkel`)!
         let mut target = mat4_identity();
         target[3][0] = self.player.pos[0];
         target[3][1] = self.player.pos[1];
@@ -245,43 +268,128 @@ impl PlayState {
         let px = p_lerp[3][0];
         let py = p_lerp[3][1];
         let pz = p_lerp[3][2];
+        let walk_phase = self.player.total_distance_moved * 0.08;
 
-        let player_rgba = if self.player.form == PlayerForm::DekuScrub {
-            [180, 130, 50, 255]
-        } else {
-            [50, 210, 80, 255]
-        };
-        backend.set_texture_enabled(false);
-        backend.set_cull_mode(false, false);
-        backend.set_model_matrix(&mat4_identity());
-        let emit_marker = |cx: f32, cy: f32, cz: f32, r: f32, h: f32, col: [u8; 4], bk: &mut B| {
-            let c = u32::from_le_bytes(col);
-            let verts = [
-                pmm_gfx::PspVertex { u: 0.0, v: 0.0, color: c, x: cx - r, y: cy, z: cz },
-                pmm_gfx::PspVertex { u: 0.0, v: 0.0, color: c, x: cx + r, y: cy, z: cz },
-                pmm_gfx::PspVertex { u: 0.0, v: 0.0, color: c, x: cx + r, y: cy + h, z: cz },
-                pmm_gfx::PspVertex { u: 0.0, v: 0.0, color: c, x: cx - r, y: cy, z: cz },
-                pmm_gfx::PspVertex { u: 0.0, v: 0.0, color: c, x: cx + r, y: cy + h, z: cz },
-                pmm_gfx::PspVertex { u: 0.0, v: 0.0, color: c, x: cx - r, y: cy + h, z: cz },
-            ];
-            bk.draw_triangles(&verts);
-        };
-        emit_marker(px, py, pz, 14.0, 44.0, player_rgba, backend);
-        for actor in &self.scene.actors {
-            if actor.collected {
-                continue;
+        let link_rendered = match self.player.form {
+            PlayerForm::DekuScrub => {
+                if let (Some(skel), Some(obj)) = (&self.deku_skel, bank.object_link_nuts.as_slice()) {
+                    draw_rom_skeleton_actor(
+                        skel,
+                        0x4445_4B55,
+                        obj,
+                        bank,
+                        [px, py, pz],
+                        self.player.yaw,
+                        walk_phase,
+                        0.01,
+                        renderer,
+                        res,
+                        backend,
+                    );
+                    true
+                } else {
+                    false
+                }
             }
-            emit_marker(
-                actor.pos[0],
-                actor.pos[1],
-                actor.pos[2],
-                12.0,
-                36.0,
-                actor.color_rgba(),
-                backend,
-            );
+            _ => {
+                if let (Some(skel), Some(obj)) = (&self.human_skel, bank.object_link_child.as_slice()) {
+                    draw_rom_skeleton_actor(
+                        skel,
+                        0x4C49_4E4B,
+                        obj,
+                        bank,
+                        [px, py, pz],
+                        self.player.yaw,
+                        walk_phase,
+                        0.01,
+                        renderer,
+                        res,
+                        backend,
+                    );
+                    true
+                } else {
+                    false
+                }
+            }
+        };
+
+        if !link_rendered {
+            let player_rgba = if self.player.form == PlayerForm::DekuScrub {
+                [180, 130, 50, 255]
+            } else {
+                [50, 210, 80, 255]
+            };
+            backend.set_texture_enabled(false);
+            backend.set_cull_mode(false, false);
+            backend.set_model_matrix(&mat4_identity());
+            let c = u32::from_le_bytes(player_rgba);
+            let verts = [
+                pmm_gfx::PspVertex { u: 0.0, v: 0.0, color: c, x: px - 14.0, y: py, z: pz },
+                pmm_gfx::PspVertex { u: 0.0, v: 0.0, color: c, x: px + 14.0, y: py, z: pz },
+                pmm_gfx::PspVertex { u: 0.0, v: 0.0, color: c, x: px + 14.0, y: py + 44.0, z: pz },
+                pmm_gfx::PspVertex { u: 0.0, v: 0.0, color: c, x: px - 14.0, y: py, z: pz },
+                pmm_gfx::PspVertex { u: 0.0, v: 0.0, color: c, x: px + 14.0, y: py + 44.0, z: pz },
+                pmm_gfx::PspVertex { u: 0.0, v: 0.0, color: c, x: px - 14.0, y: py + 44.0, z: pz },
+            ];
+            backend.draw_triangles(&verts);
+        }
+
+        // 3. Render 3D Clock Town Owl (`gOwlFlyingSkel`) cleanly on OwlSaveStatue
+        if let (Some(owl_sk), Some(owl_obj)) = (&self.owl_skel, bank.object_owl.as_slice()) {
+            for actor in &self.scene.actors {
+                if !actor.collected && actor.kind == ActorKind::OwlSaveStatue {
+                    draw_rom_skeleton_actor(
+                        owl_sk,
+                        0x4F57_4C30,
+                        owl_obj,
+                        bank,
+                        actor.pos,
+                        actor.yaw,
+                        (self.logic_ticks as f32) * 0.1,
+                        0.015,
+                        renderer,
+                        res,
+                        backend,
+                    );
+                }
+            }
         }
         let _ = pool;
+    }
+
+    pub fn draw_3d_world<S: PakSource, B: GfxBackend>(
+        &self,
+        fraction: f32,
+        pool: &mut GfxPool,
+        renderer: &mut Renderer,
+        res: &mut ResourceManager<S>,
+        backend: &mut B,
+        interp: &mut FrameInterpolator,
+    ) {
+        let empty = RomVisualBank::default();
+        self.draw_3d_world_with_bank(&empty, fraction, pool, renderer, res, backend, interp);
+    }
+
+    pub fn draw_2d_overlay_with_bank<S: PakSource, B: GfxBackend>(
+        &self,
+        bank: &RomVisualBank,
+        pool: &mut GfxPool,
+        renderer: &mut Renderer,
+        res: &mut ResourceManager<S>,
+        backend: &mut B,
+    ) {
+        backend.set_scissor(0, 0, 480, 272);
+        renderer.set_overlay_mode(true, backend);
+        HudRenderer::draw_with_bank(
+            bank,
+            &self.save,
+            &self.clock,
+            self.camera.letterbox_bar_px,
+            pool,
+            renderer,
+            res,
+            backend,
+        );
     }
 
     pub fn draw_2d_overlay<S: PakSource, B: GfxBackend>(
@@ -291,17 +399,8 @@ impl PlayState {
         res: &mut ResourceManager<S>,
         backend: &mut B,
     ) {
-        backend.set_scissor(0, 0, 480, 272);
-        renderer.set_overlay_mode(true, backend);
-        HudRenderer::draw(
-            &self.save,
-            &self.clock,
-            self.camera.letterbox_bar_px,
-            pool,
-            renderer,
-            res,
-            backend,
-        );
+        let empty = RomVisualBank::default();
+        self.draw_2d_overlay_with_bank(&empty, pool, renderer, res, backend);
     }
 
     pub fn draw_frame<S: PakSource, B: GfxBackend>(

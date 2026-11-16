@@ -3,6 +3,7 @@
 extern crate alloc;
 
 pub mod actors;
+pub mod assets_rom;
 pub mod bgcheck;
 pub mod camera;
 pub mod clock;
@@ -14,6 +15,7 @@ pub mod play;
 pub mod player;
 pub mod save;
 pub mod scene;
+pub mod skel;
 pub mod states;
 pub mod thga;
 
@@ -568,5 +570,46 @@ mod tests {
         play.transition_to_scene(SceneId::InsideTower, &mut arena, &mut res);
         play.transition_to_scene(SceneId::SouthClockTown, &mut arena, &mut res);
         assert_eq!(play.scene_leak_bytes_max, 0);
+    }
+
+    #[test]
+    fn rom_skeleton_and_title_mask_sprite_parsing() {
+        use assets_rom::RomTexSprite;
+        use pmm_schema::gbi;
+        use skel::parse_flex_skeleton;
+
+        // Synthetic big-endian 2-limb LodLimb FlexSkeletonHeader in seg 0x06
+        let mut obj = alloc::vec![0u8; 64];
+        // Limb 0 @ 0x00 (16 B), Limb 1 @ 0x10 (16 B), table @ 0x20, skel @ 0x28
+        obj[0..2].copy_from_slice(&0i16.to_be_bytes());
+        obj[6] = 1;   // child = 1
+        obj[7] = 255; // sib = none
+        obj[8..12].copy_from_slice(&0x0600_0000u32.to_be_bytes());
+        obj[0x16] = 255;
+        obj[0x17] = 255;
+        obj[0x18..0x1C].copy_from_slice(&0x0600_0000u32.to_be_bytes());
+        obj[0x20..0x24].copy_from_slice(&0x0600_0000u32.to_be_bytes());
+        obj[0x24..0x28].copy_from_slice(&0x0600_0010u32.to_be_bytes());
+        obj[0x28..0x2C].copy_from_slice(&0x0600_0020u32.to_be_bytes());
+        obj[0x2C] = 2; // limbCount
+
+        let skel = parse_flex_skeleton(&obj, 0x28, true).expect("parse flex skel");
+        assert_eq!(skel.limbs.len(), 2);
+        assert_eq!(skel.limbs[0].child, 1);
+
+        // 128x112 non-pow2 mask RGBA32 -> po2 128x128 with clamped u_max=1.0, v_max=112/128
+        let mask_raw = alloc::vec![255u8; 128 * 112 * 4];
+        let sprite = RomTexSprite::decode_from(
+            1,
+            &mask_raw,
+            0,
+            gbi::G_IM_FMT_RGBA,
+            gbi::G_IM_SIZ_32B,
+            128,
+            112,
+        )
+        .expect("decode mask");
+        assert_eq!((sprite.po2_w, sprite.po2_h), (128, 128));
+        assert!((sprite.v_max - 112.0 / 128.0).abs() < 1e-4);
     }
 }
