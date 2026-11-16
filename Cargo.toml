@@ -1,0 +1,10 @@
+[package]
+name = "pocket-majora"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+psp = { path = "tools/rust-psp/psp" }
+
+[patch.crates-io]
+unicode-width = { git = "https://git.sr.ht/~sajattack/unicode-width" }

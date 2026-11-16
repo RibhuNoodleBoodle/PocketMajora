@@ -19,12 +19,12 @@ Candidate worker folder: gemini_flash/Gemini_Step_XX.txt
 ======================================================================
 CURRENT PROJECT STATE -- VERIFIED AT STAGE 4
 ======================================================================
-CURRENT STAGE: 4 COMPLETED (ALL FLASH WORKER PROMPTS 01..10 AUTHORED) -> READY FOR FLASH EXECUTION (STEP 01 -> STEP 10)
-LAST COMPLETED: STAGE 4 -- INCREMENTAL WORKER PROMPTS 01..10 AUTHORED (2026-11-16)
-LAST ATTEMPTED: STAGE 4 -- INCREMENTAL WORKER PROMPTS 01..10
-ACTIVE MODEL: Gemini Argon
+CURRENT STAGE: STEP 01 PASS -> STARTING STEP 02
+LAST COMPLETED: STEP 01 -- RUST PSP TOOLCHAIN BOOTSTRAP & MEMSIZE=1 EBOOT.PBP PROBE (2026-11-16)
+LAST ATTEMPTED: STEP 01 -- RUST PSP TOOLCHAIN BOOTSTRAP & EBOOT.PBP PROBE (PASS)
+ACTIVE MODEL: Gemini Hydrogen (High)
 REPOSITORY ROOT: /mnt/6421-8598/building/PocketMajora
-BRANCH / GIT HEAD: main (tracking origin/main) / prior commit e01332bd5948c3a6ef222a1ac08c0d781a5505ee (Stage 3)
+BRANCH / GIT HEAD: main (tracking origin/main) / prior commit 4543785671ea5dc769361a4d974defa45494f29c
 DIRTY / UNCOMMITTED FILES:
   - Untracked source trees at root: `majora_code/` (2S2H v5.1.0), `psp_ref/` (z2442/mm-PSP)
   - Untracked prompt files: `Gemini_Argon_Medium_Rust_PSP3000_Master_Prompt.txt`, `Gemini_Resume_Medium_PSP_Rust.txt`
@@ -52,9 +52,9 @@ GIT COMMITS FOR THIS PROJECT:
   - `e01332bd5948c3a6ef222a1ac08c0d781a5505ee` (Stage 3 architecture, license audit, & CONDITIONAL GO gate)
   - `7942393604004d6cf775e59f76486d099d08d577` (Stage 4 initial Flash worker prompt suite Steps 02..10)
   - Stage 4 40 FPS / 25 ms optimization update commit: committed with updated `PSP_RUST_ARCHITECTURE.txt`, `FEASIBILITY_GATE.txt`, `Gemini_Step_02,03,05,06,09,10.txt`, `INDEX.txt`, and `handoff.txt`
-BUILD (EBOOT.PBP): NOT RUN (Queued for Flash in `gemini_flash/Gemini_Step_01.txt`)
-PPSSPP TEST: NOT RUN (Queued for Flash in `gemini_flash/Gemini_Step_01.txt`)
-REAL PSP-3000 TEST: NOT RUN
+BUILD (EBOOT.PBP): PASS (Step 01 `target/mipsel-sony-psp/release/EBOOT.PBP`, 278 KiB, `MEMSIZE=1`)
+PPSSPP TEST: PASS (Step 01 Fat negative test `24,534,016` B -> `ERR(0x800200d9)`; Slim positive test `58,088,448` B -> `SLIM_16MIB_ALLOC: OK(0x09059400)`, 60 GU frames)
+REAL PSP-3000 TEST: NOT RUN (awaiting hardware)
 
 ======================================================================
 BLOCKERS, UNCERTAINTIES, AND REAL RISKS
@@ -104,12 +104,12 @@ OWNER NEW INSTRUCTIONS / MANUAL OBSERVATIONS:
 ======================================================================
 AGENT CHECKPOINT (MODELS UPDATE THIS SECTION FREQUENTLY)
 ======================================================================
-What just happened: Completed 40 FPS (`<= 25.0 ms` frame latency) architecture and optimization update across `docs/architecture/{PSP_RUST_ARCHITECTURE,FEASIBILITY_GATE}.txt`, `gemini_flash/Gemini_Step_{02,03,05,06,09,10}.txt`, and `gemini_flash/INDEX.txt`. Game simulation remains at deterministic 20 Hz (`50,000 us`) while rendering 2 matrix-interpolated passes per tick (`fraction = 0.5` at `+25 ms`, `1.0` at `+50 ms`) with 333/166 MHz clock lock, pre-swizzled textures, compiled `sceGuCallList` room meshes, and VFPU matrix/lerp acceleration.
-Last checked source path: /mnt/6421-8598/building/PocketMajora/gemini_flash/Gemini_Step_06.txt
-Last verified command / output: Verified all updated architecture and Flash step files on disk.
-Modified files since last commit: `docs/architecture/PSP_RUST_ARCHITECTURE.txt`, `docs/architecture/FEASIBILITY_GATE.txt`, `gemini_flash/Gemini_Step_{02,03,05,06,09,10}.txt`, `gemini_flash/INDEX.txt`, `handoff.txt`.
-Potential work loss if session ends now: NONE (all 40 FPS updates written and committed).
-Exact next command/action: Run Gemini Flash sequentially starting on `gemini_flash/Gemini_Step_01.txt` through `gemini_flash/Gemini_Step_10.txt`.
+What just happened: Completed Step 01 (`PASS`). Installed `nightly-2026-04-13` + `rust-src`, cloned `tools/rust-psp` @ `e4cc06f6`, patched `mksfo.rs` for `MEMSIZE`, built `EBOOT.PBP`, and verified both PPSSPP Fat (`24.5 MB` -> `0x800200d9`) and Slim (`58.1 MB` -> `16 MiB OK`, 60 GU frames) in `docs/research/01_step01_verification_log.txt`.
+Last checked source path: /mnt/6421-8598/building/PocketMajora/docs/research/01_step01_verification_log.txt
+Last verified command / output: PPSSPP Slim `boot_probe.log` -> `STATUS: PASS`, `INITIAL_TOTAL_FREE_BYTES: 58088448`, `SLIM_16MIB_ALLOC: OK(0x09059400)`.
+Modified files since last commit: `.gitignore`, `rust-toolchain.toml`, `Cargo.toml`, `Cargo.lock`, `Psp.toml`, `src/main.rs`, `scripts/build_eboot.sh`, `docs/research/01_step01_verification_log.txt`, `gemini_flash/INDEX.txt`, `handoff.txt`.
+Potential work loss if session ends now: NONE (committing Step 01 now).
+Exact next command/action: Execute `gemini_flash/Gemini_Step_02.txt` (Workspace, `pmm-schema`, 333/166 MHz clock lock, Partition 2 slab pools).
 
 ======================================================================
 APPEND-ONLY CHANGE LOG
@@ -147,6 +147,11 @@ APPEND-ONLY CHANGE LOG
              Step 02, pre-swizzled textures in Step 03, compiled `sceGuCallList`
              room meshes & VFPU matrix lerp in Step 05, and 2-pass `25,000 us`
              no-catch-up pacer + `FrameInterpolator` in Step 06).
+2026-11-16 Gemini Hydrogen (High): Completed Step 01 (`PASS`). Bootstrapped
+             `nightly-2026-04-13` + `rust-src` and `AndrewAltimit/rust-psp`
+             @ `e4cc06f6` (with `mksfo` `MEMSIZE` DWORD patch). Built `EBOOT.PBP`
+             (278 KiB) and verified in PPSSPP: Fat `24.5 MB` -> `0x800200d9`,
+             Slim `58.1 MB` -> `16 MiB OK` + 60 GU frames (`01_step01_verification_log.txt`).
 
 ======================================================================
 RECOVERY RULES (IF ARGON OR FLASH FAILS / TOKENS EXPIRE)

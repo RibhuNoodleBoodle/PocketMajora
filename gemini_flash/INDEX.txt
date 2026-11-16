@@ -3,9 +3,9 @@ GEMINI FLASH WORKER PROMPT INDEX -- POCKETMAJORA (RUST PSP-3000)
 ======================================================================
 STEP | FILE                            | PREREQUISITE    | STATUS
 -----+---------------------------------+-----------------+-------------------------------
-01   | gemini_flash/Gemini_Step_01.txt | Stage 0-3 PASS  | READY FOR FLASH (START HERE)
+01   | gemini_flash/Gemini_Step_01.txt | Stage 0-3 PASS  | PASS (EBOOT.PBP + PPSSPP Slim 58.1MB OK)
      | (Rust PSP toolchain bootstrap, MEMSIZE=1 EBOOT.PBP, GU/Ctrl/RAM probe)
-02   | gemini_flash/Gemini_Step_02.txt | Step 01 PASS    | AUTHORED & READY (Gated on 01)
+02   | gemini_flash/Gemini_Step_02.txt | Step 01 PASS    | READY TO EXECUTE (Next)
      | (Root Cargo workspace, pmm-schema, Partition 2 slab allocator, CI smoke test)
 03   | gemini_flash/Gemini_Step_03.txt | Step 02 PASS    | AUTHORED & READY (Gated on 02)
      | (Host pmm-extractor CLI: US ROM CRC32/SHA-1 check, Yaz0, XML -> pmm_2s2h.pak)

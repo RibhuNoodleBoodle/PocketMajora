@@ -1,0 +1,66 @@
+======================================================================
+STEP 01 VERIFICATION LOG -- RUST PSP TOOLCHAIN & MEMSIZE=1 EBOOT PROBE
+Date: 2026-11-16
+Verifier: Gemini Hydrogen (High)
+Repository Root: /mnt/6421-8598/building/PocketMajora
+======================================================================
+
+1. TOOLCHAIN & SDK BOOTSTRAP
+----------------------------------------------------------------------
+- Toolchain: `rustc 1.97.0-nightly (14196dbfa 2026-04-12)` (`nightly-2026-04-13`)
+- Components: `rust-src` installed via `rustup`
+- Pinned SDK: `AndrewAltimit/rust-psp` @ `e4cc06f6fa50fa45dc3ae8b332e8a2b67625f588`
+- Patch applied in `tools/rust-psp/cargo-psp/src/bin/mksfo.rs`:
+  Added `("MEMSIZE", (EntryType::Dword, false, false, true, true))`
+- Installed host tools in `~/.cargo/bin/`:
+  `cargo-psp`, `mksfo`, `pack-pbp`, `prxgen`, `prxmin`
+
+2. EBOOT.PBP BUILD OUTPUT (`./scripts/build_eboot.sh`)
+----------------------------------------------------------------------
+- `cargo psp --release` + `mksfo -d MEMSIZE=1 "PocketMajora"` + `pack-pbp`
+- Output:
+  - `target/mipsel-sony-psp/release/EBOOT.PBP`: 278 KiB
+  - `target/mipsel-sony-psp/release/PARAM.SFO`: 320 bytes (`MEMSIZE=1`)
+  - ELF block in PSP RAM: `0x08804000 - 0x08859400` (`0x00055400` bytes = ~341 KiB)
+
+3. TEST A (NEGATIVE TEST -- PSP-1000 / 32 MiB FAT MODEL `PSPModel = 0`)
+----------------------------------------------------------------------
+Command:
+  `/snap/bin/ppsspp-emulator --appendconfig=.../fat_test.ini --log=.../ppsspp_fat.log .../EBOOT.PBP`
+Actual `boot_probe.log` produced by `EBOOT.PBP`:
+```
+STATUS: SLIM_RAM_NOT_UNLOCKED
+INITIAL_TOTAL_FREE_BYTES: 24534016
+INITIAL_MAX_FREE_BYTES: 24275968
+RUST_VEC_64K_ADDR: 0x08859409
+SLIM_16MIB_ALLOC: ERR(0x800200d9)
+VRAM_FBP0_OFFSET: 0x00000000
+FRAMES_RENDERED: 60
+LAST_CTRL_LX_LY_BUTTONS: 128,128,0x00000000
+```
+Verification: On 32 MiB Fat PSP-1000, initial free user RAM is 24,534,016 bytes
+(~23.4 MiB) and the 16 MiB user allocation after the 8 MiB Rust heap cleanly fails
+with kernel `SCE_KERNEL_ERROR_NO_MEMORY` (`0x800200d9`).
+
+4. TEST B (POSITIVE GATE TEST -- PSP-3000 / 64 MiB SLIM MODEL `PSPModel = 1` + `MEMSIZE=1`)
+----------------------------------------------------------------------
+Command:
+  `/snap/bin/ppsspp-emulator --appendconfig=.../slim_test.ini --log=.../ppsspp_slim.log .../EBOOT.PBP`
+Actual `boot_probe.log` produced by `EBOOT.PBP`:
+```
+STATUS: PASS
+INITIAL_TOTAL_FREE_BYTES: 58088448
+INITIAL_MAX_FREE_BYTES: 57830400
+RUST_VEC_64K_ADDR: 0x08859409
+SLIM_16MIB_ALLOC: OK(0x09059400)
+VRAM_FBP0_OFFSET: 0x00000000
+FRAMES_RENDERED: 60
+LAST_CTRL_LX_LY_BUTTONS: 128,128,0x00000000
+```
+Verification:
+- `INITIAL_TOTAL_FREE_BYTES`: `58,088,448` bytes (~55.40 MiB, > 40,000,000 bytes)
+- `SLIM_16MIB_ALLOC`: `OK(0x09059400)` (above the 8 MiB Rust heap `0x08859400..0x09059400`)
+- `FRAMES_RENDERED`: `60` (via `sceGu*`/`sceGum*` + `sceCtrlReadBufferPositive`)
+- Clean exit via `sceKernelExitGame()`.
+- Real PSP-3000 hardware test: NOT RUN (awaiting physical hardware).
+======================================================================
