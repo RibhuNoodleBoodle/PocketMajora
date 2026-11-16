@@ -3,6 +3,7 @@ resolver = "2"
 members = [
     ".",
     "crates/pmm-schema",
+    "tools/pmm-extractor",
 ]
 exclude = ["tools/rust-psp"]
 

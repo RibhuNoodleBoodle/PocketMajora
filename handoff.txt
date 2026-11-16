@@ -19,12 +19,12 @@ Candidate worker folder: gemini_flash/Gemini_Step_XX.txt
 ======================================================================
 CURRENT PROJECT STATE -- VERIFIED AT STAGE 4
 ======================================================================
-CURRENT STAGE: STEP 02 PASS -> STARTING STEP 03
-LAST COMPLETED: STEP 02 -- WORKSPACE, PMM-SCHEMA, 333/166 MHZ CLOCKS, & PARTITION 2 POOLS (2026-11-16)
-LAST ATTEMPTED: STEP 02 -- WORKSPACE, PMM-SCHEMA, & PARTITION 2 SLAB ALLOCATOR (PASS)
+CURRENT STAGE: STEP 03 PASS -> STARTING STEP 04
+LAST COMPLETED: STEP 03 -- HOST PMM-EXTRACTOR, YAZ0, XML PARSER, & PAK CONTRACT (2026-11-16)
+LAST ATTEMPTED: STEP 03 -- USER ROM VALIDATION, HOST EXTRACTOR, & PMM_2S2H.PAK (PASS; USER ROM ABSENT -> SYNTHETIC FIXTURE VERIFIED)
 ACTIVE MODEL: Gemini Hydrogen (High)
 REPOSITORY ROOT: /mnt/6421-8598/building/PocketMajora
-BRANCH / GIT HEAD: main (tracking origin/main) / prior commit 99e8383b9c0aab8ed1ebf079656860e63e163d14
+BRANCH / GIT HEAD: main (tracking origin/main) / prior commit 9fb6526e9ca0a0886d4d615be56f52cf449ed18a
 DIRTY / UNCOMMITTED FILES:
   - Untracked source trees at root: `majora_code/` (2S2H v5.1.0), `psp_ref/` (z2442/mm-PSP)
   - Untracked prompt files: `Gemini_Argon_Medium_Rust_PSP3000_Master_Prompt.txt`, `Gemini_Resume_Medium_PSP_Rust.txt`
@@ -104,12 +104,12 @@ OWNER NEW INSTRUCTIONS / MANUAL OBSERVATIONS:
 ======================================================================
 AGENT CHECKPOINT (MODELS UPDATE THIS SECTION FREQUENTLY)
 ======================================================================
-What just happened: Completed Step 02 (`PASS`). Expanded root into Cargo workspace with `crates/pmm-schema` (6/6 host tests), `src/platform/{clock,memory,crash}.rs`, locked 333/166 MHz clocks, allocated 28 MiB Partition 2 pools, and verified 0-byte arena leak across 100 cycles (`docs/research/02_step02_verification_log.txt`).
-Last checked source path: /mnt/6421-8598/building/PocketMajora/docs/research/02_step02_verification_log.txt
-Last verified command / output: `./scripts/test_step02.sh` -> `STATUS: PASS`, `CPU_BUS_CLOCK_MHZ: 333/166`, `FREE_AFTER_28MIB_POOLS: 29015296`.
-Modified files since last commit: `Cargo.toml`, `Cargo.lock`, `crates/pmm-schema/*`, `src/platform/*`, `src/main.rs`, `scripts/test_step02.sh`, `docs/research/02_step02_verification_log.txt`, `gemini_flash/INDEX.txt`, `handoff.txt`.
-Potential work loss if session ends now: NONE (committing Step 02 now).
-Exact next command/action: Execute `gemini_flash/Gemini_Step_03.txt` (`tools/pmm-extractor`: ROM validation, Yaz0, XML parser, `pmm_2s2h.pak` + synthetic fixture).
+What just happened: Completed Step 03 (`PASS`). Implemented `tools/pmm-extractor` (ROM format/CRC32/SHA-1 validator, Yaz0 decompressor, 2S2H XML parser, PSP 16x8 texture swizzler, `pmm_2s2h.pak` + synthetic fixture builder). All 10 host tests passed, 1,320 XML files parsed with 0 errors (`45,263` asset declarations), and `target/test_synthetic.pak` built cleanly. User ROM absent (`USER_ROM_EXTRACTION: NOT RUN`).
+Last checked source path: /mnt/6421-8598/building/PocketMajora/docs/research/03_step03_verification_log.txt
+Last verified command / output: `./scripts/test_step03.sh` -> `10 passed; 0 failed`, `XML_AUDIT: PASS files_scanned=1320`, `SYNTHETIC_FIXTURE: PASS`.
+Modified files since last commit: `Cargo.toml`, `Cargo.lock`, `tools/pmm-extractor/*`, `scripts/test_step03.sh`, `docs/research/03_step03_verification_log.txt`, `gemini_flash/INDEX.txt`, `handoff.txt`.
+Potential work loss if session ends now: NONE (committing Step 03 now).
+Exact next command/action: Execute `gemini_flash/Gemini_Step_04.txt` (`crates/pmm-assets` PSP streaming loader + 20x zero-leak reload test in PPSSPP).
 
 ======================================================================
 APPEND-ONLY CHANGE LOG
@@ -157,6 +157,11 @@ APPEND-ONLY CHANGE LOG
              locked 333/166 MHz clocks, allocated 28 MiB Partition 2 pools
              (`29.0 MB` still free), and verified 0-byte leak over 100 resets
              (`02_step02_verification_log.txt`).
+2026-11-16 Gemini Hydrogen (High): Completed Step 03 (`PASS`). Implemented
+             `tools/pmm-extractor` (ROM validator, Yaz0, 2S2H XML parser, PSP
+             16x8 texture swizzler, `pmm_2s2h.pak` + synthetic fixture). Passed
+             10/10 tests, audited 1,320 XML files with 0 errors (`45,263` assets),
+             generated `target/test_synthetic.pak` (`0x54455354`); user ROM absent.
 
 ======================================================================
 RECOVERY RULES (IF ARGON OR FLASH FAILS / TOKENS EXPIRE)
