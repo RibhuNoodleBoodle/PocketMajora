@@ -84,6 +84,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "pmm-game"
+version = "0.1.0"
+dependencies = [
+ "pmm-assets",
+ "pmm-gfx",
+ "pmm-schema",
+]
+
+[[package]]
 name = "pmm-gfx"
 version = "0.1.0"
 dependencies = [
@@ -102,6 +111,7 @@ version = "0.1.0"
 dependencies = [
  "libm",
  "pmm-assets",
+ "pmm-game",
  "pmm-gfx",
  "pmm-schema",
  "psp",

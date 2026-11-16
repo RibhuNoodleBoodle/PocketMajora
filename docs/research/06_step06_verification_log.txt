@@ -1,0 +1,53 @@
+======================================================================
+STEP 06 VERIFICATION LOG -- PMM-GAME 40 FPS INTERP, 20 HZ GRAPH, PADMGR, FLASHROM
+Date: 2026-11-16
+Verifier: Gemini Hydrogen (High)
+Repository Root: /mnt/6421-8598/building/PocketMajora
+======================================================================
+
+1. HOST UNIT TESTS (`crates/pmm-game`)
+----------------------------------------------------------------------
+Command:
+  `cargo test --manifest-path crates/pmm-game/Cargo.toml --target x86_64-unknown-linux-gnu`
+Result:
+  `12 passed; 0 failed`
+  - `frame_interpolator_blends_midpoint_and_guards_teleports_flips_and_scene_cuts` ... ok
+  - `frame_interpolator_scale_jump_guard` ... ok
+  - `frame_interpolator_nan_guard` ... ok
+  - `thga_arena_allocation_and_crash_detection` ... ok
+  - `thga_pool_canary_corruption_detection` ... ok
+  - `padmgr_press_release_edges_and_deadzone` ... ok
+  - `padmgr_triangle_c_buttons_and_select_jpad` ... ok
+  - `save_context_checksum_and_corrupt_detection` ... ok
+  - `sys_flashrom_async_contract_and_oob_negative` ... ok
+  - `save_slot_backup_fallback_on_corrupt_primary` ... ok
+  - `pacer_40fps_and_n64_counter_conversion` ... ok
+  - `game_state_id_names_and_pacer_wrap` ... ok
+
+2. PPSSPP SLIM (`PSPModel = 1`, `MEMSIZE=1`) EXECUTION (`./scripts/test_step06.sh`)
+----------------------------------------------------------------------
+Actual `step06_game.log` written by `EBOOT.PBP`:
+```
+STATUS: PASS
+GRAPH_LOGIC_TICKS_20HZ: 120
+PRESENTED_FRAMES_40FPS: 240
+AVG_FRAME_LATENCY_US: 24999
+INTERPOLATED_MATRIX_BLENDS: 117
+TELEPORT_SNAP_GUARD_TEST: OK
+GAMESTATE_TRANSITIONS: TitleSetup->Title->FileChoose
+FLASHROM_WRITE_ASYNC_BUSY_BEFORE_COLLECT: 1
+FLASHROM_AWAIT_RESULT: 0
+FLASHROM_FILE_SIZE_BYTES: 131072
+SAVE_SLOT0_RELOAD_MAGIC_AND_CHECKSUM: OK(ZELDA3)
+NEGATIVE_FLASHROM_OUT_OF_BOUNDS_PAGE: EXPECTED_ERR
+```
+Verification:
+- 120 logic ticks at 20 Hz produced 240 presented frames at 40 FPS with
+  `AVG_FRAME_LATENCY_US: 24999` (24.999 ms <= 25.0 ms target).
+- `FrameInterpolator` performed 117 midpoint blends (`fraction = 0.5`) and
+  snapped cleanly on the 5,000-unit teleport guard.
+- `SysFlashrom` atomically created `mm-psp-save.bin` (`131,072` bytes), verified
+  `is_busy() == 1` prior to `await_result() == 0`, reloaded `ZELDA3` slot 0 via
+  a fresh `SysFlashrom` instance, and returned `-1` for out-of-bounds page `1024`.
+- Real PSP-3000 hardware test: NOT RUN.
+======================================================================
