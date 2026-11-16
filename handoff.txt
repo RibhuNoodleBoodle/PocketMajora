@@ -1,5 +1,5 @@
 PROJECT HANDOFF -- OWNER-EDITABLE / RUST PSP-3000 MAJORA'S MASK
-Updated by: Gemini Argon (Medium), 2026-11-16 (STAGE 3 ARCHITECTURE & CONDITIONAL GO GATE COMPLETE)
+Updated by: Gemini Argon, 2026-11-16 (STAGE 4 COMPLETE -- ALL GEMINI FLASH STEPS 01..10 AUTHORED & READY)
 This is a plain-text continuity record. Both Argon and Flash must READ it first.
 
 ======================================================================
@@ -17,14 +17,14 @@ Master prompt: Gemini_Argon_Medium_Rust_PSP3000_Master_Prompt.txt
 Candidate worker folder: gemini_flash/Gemini_Step_XX.txt
 
 ======================================================================
-CURRENT PROJECT STATE -- VERIFIED AT STAGE 3
+CURRENT PROJECT STATE -- VERIFIED AT STAGE 4
 ======================================================================
-CURRENT STAGE: 3 COMPLETED (ARCHITECTURE + CONDITIONAL GO) -> READY FOR FLASH STEP 01 (OR ARGON STEP 02 DRAFTING)
-LAST COMPLETED: STAGE 3 -- ARCHITECTURE + GO/NO-GO GATE (2026-11-16)
-LAST ATTEMPTED: STAGE 3 -- ARCHITECTURE + GO/NO-GO GATE
-ACTIVE MODEL: Gemini Argon (Medium)
+CURRENT STAGE: 4 COMPLETED (ALL FLASH WORKER PROMPTS 01..10 AUTHORED) -> READY FOR FLASH EXECUTION (STEP 01 -> STEP 10)
+LAST COMPLETED: STAGE 4 -- INCREMENTAL WORKER PROMPTS 01..10 AUTHORED (2026-11-16)
+LAST ATTEMPTED: STAGE 4 -- INCREMENTAL WORKER PROMPTS 01..10
+ACTIVE MODEL: Gemini Argon
 REPOSITORY ROOT: /mnt/6421-8598/building/PocketMajora
-BRANCH / GIT HEAD: main (tracking origin/main) / prior commit c80d8bd2ba6b6c36c2ce81b607bbb9ba329a28bd (Stage 2)
+BRANCH / GIT HEAD: main (tracking origin/main) / prior commit e01332bd5948c3a6ef222a1ac08c0d781a5505ee (Stage 3)
 DIRTY / UNCOMMITTED FILES:
   - Untracked source trees at root: `majora_code/` (2S2H v5.1.0), `psp_ref/` (z2442/mm-PSP)
   - Untracked prompt files: `Gemini_Argon_Medium_Rust_PSP3000_Master_Prompt.txt`, `Gemini_Resume_Medium_PSP_Rust.txt`
@@ -32,23 +32,25 @@ DIRTY / UNCOMMITTED FILES:
 PSP REFERENCE BASELINE: Present at `/mnt/6421-8598/building/PocketMajora/psp_ref/` (`z2442/mm-PSP` with `oot-PSP` shared backend `d4ad96c045d39e18a80f7a1f5d7f8fdba9621d38`, Nov 10, 2026; no root OSS license covering `src/port/psp/**` -> clean-room technical reference only)
 RUST PSP SDK SELECTED: `AndrewAltimit/rust-psp` pinned at commit `e4cc06f6fa50fa45dc3ae8b332e8a2b67625f588` (MIT, Edition 2024, 8 MiB userspace arena + >=256 KiB kernel-block bypass, `no_std` + `alloc`)
 RUST TOOLCHAIN PIN: `nightly-2026-04-13` with `components = ["rust-src"]` (to be bootstrapped by Flash in Step 01)
-ROM: NOT FOUND on `/mnt/6421-8598` or `/home/ribhu`; target US 1.0 ROM is 32 MiB compressed CRC32 `0xB428D8A7` / decompressed SHA-1 `d6133ace5afaa0882cf214cf88daba39e266c078` (not required until Step 03)
+ROM: NOT FOUND on `/mnt/6421-8598` or `/home/ribhu`; target US 1.0 ROM is 32 MiB compressed CRC32 `0xB428D8A7` / decompressed SHA-1 `d6133ace5afaa0882cf214cf88daba39e266c078` (Step 03 includes both real US ROM extraction and a ROM-less synthetic test pack generator so builds/tests never stall)
 DEPENDENCIES / LICENSES: Documented in `docs/architecture/DEPENDENCIES_AND_LICENSES.txt` (Root & `majora_code/` CC0-1.0; `AndrewAltimit/rust-psp` MIT; `psp_ref/src/port/psp/**` clean-room reference only).
 ARCHITECTURE VERDICT: **CONDITIONAL GO** (`docs/architecture/FEASIBILITY_GATE.txt`). Route A selected: root Cargo workspace (`pocket-majora` + `crates/pmm-{schema,assets,gfx,audio,game}` + host `tools/pmm-extractor`), 40.0 MiB User DRAM / 2.0 MiB VRAM quantitative budgets, 20.0 FPS deterministic simulation (`docs/architecture/PSP_RUST_ARCHITECTURE.txt`).
-LATEST FLASH STEP: `gemini_flash/Gemini_Step_01.txt` (READY FOR EXECUTION; see `gemini_flash/INDEX.txt`)
-RESEARCH & ARCHITECTURE OUTPUTS:
+LATEST FLASH STEP: ALL 10 STEPS AUTHORED (`gemini_flash/Gemini_Step_01.txt` .. `gemini_flash/Gemini_Step_10.txt`; start with `Gemini_Step_01.txt`; see `gemini_flash/INDEX.txt`)
+RESEARCH, ARCHITECTURE & WORKER PROMPT OUTPUTS:
   - `docs/research/00_root_audit.txt` (Stage 0 audit)
   - `docs/research/01_rust_psp_toolchain.txt` (Stage 1 toolchain & memory spike research)
   - `docs/research/02_upstream_reference_matrix.txt` (Stage 2 2S2H + mm-PSP subsystem matrix & Route A/B analysis)
   - `docs/architecture/PSP_RUST_ARCHITECTURE.txt` (Stage 3 crate topology, data-flow, 64 MiB/2 MiB budgets, subsystems)
   - `docs/architecture/DEPENDENCIES_AND_LICENSES.txt` (Stage 3 toolchain pins, crate policies, license & ROM compliance)
   - `docs/architecture/FEASIBILITY_GATE.txt` (Stage 3 CONDITIONAL GO verdict, performance targets, risk register, 10-step roadmap)
+  - `gemini_flash/INDEX.txt` + `gemini_flash/Gemini_Step_01.txt` .. `gemini_flash/Gemini_Step_10.txt` (Full 10-step Flash implementation suite)
 GIT COMMITS FOR THIS PROJECT:
   - `30b46acdc6dc09f7ca3eb0b46d6bc468581b4e3f` (Initial commit)
   - `a73938c241627580333705162b9a01da675a6d20` (Stage 0 root audit & handoff baseline)
   - `f651965f238d4b3c9cc1d633b71cc707d0bf9aa0` (Stage 1 toolchain research & Flash Step 01 prompt)
   - `c80d8bd2ba6b6c36c2ce81b607bbb9ba329a28bd` (Stage 2 upstream audit & reference port matrix)
-  - Stage 3 planning milestone commit: committed with `docs/architecture/{PSP_RUST_ARCHITECTURE,DEPENDENCIES_AND_LICENSES,FEASIBILITY_GATE}.txt`, `gemini_flash/INDEX.txt`, and `handoff.txt`
+  - `e01332bd5948c3a6ef222a1ac08c0d781a5505ee` (Stage 3 architecture, license audit, & CONDITIONAL GO gate)
+  - Stage 4 planning milestone commit: committed with `gemini_flash/Gemini_Step_02.txt` .. `gemini_flash/Gemini_Step_10.txt`, `gemini_flash/INDEX.txt`, and `handoff.txt`
 BUILD (EBOOT.PBP): NOT RUN (Queued for Flash in `gemini_flash/Gemini_Step_01.txt`)
 PPSSPP TEST: NOT RUN (Queued for Flash in `gemini_flash/Gemini_Step_01.txt`)
 REAL PSP-3000 TEST: NOT RUN
@@ -66,8 +68,8 @@ BLOCKERS, UNCERTAINTIES, AND REAL RISKS
 ======================================================================
 NEXT EXACT ACTION (FOR FLASH OR GEMINI ARGON MEDIUM)
 ======================================================================
-1) RECOMMENDED NOW: Execute **Gemini Flash** on `gemini_flash/Gemini_Step_01.txt` to bootstrap `nightly-2026-04-13` + `AndrewAltimit/rust-psp` (`e4cc06f6`), build the `MEMSIZE=1` `EBOOT.PBP` probe, run PPSSPP Fat vs Slim tests, and record real execution logs in `docs/research/01_step01_verification_log.txt` and `handoff.txt`.
-2) Or, if continuing Argon planning (`STAGE 4`) to pre-author `gemini_flash/Gemini_Step_02.txt` (the next just-in-time worker prompt: root Cargo workspace `crates/pmm-schema` + Partition 2 slab allocator + smoke test suite), reply `CONTINUE`.
+1) Execute **Gemini Flash** sequentially on `gemini_flash/Gemini_Step_01.txt` through `gemini_flash/Gemini_Step_10.txt` (starting at `gemini_flash/Gemini_Step_01.txt`), committing and updating `handoff.txt` after each verified milestone gate passes.
+2) If any Flash step encounters an unexpected hardware/emulator blocker, return to Gemini Argon with the logged error in `handoff.txt` for architectural revision.
 
 ======================================================================
 KNOWN TECHNICAL REFERENCES -- NOT IMPLEMENTATION PROOF
@@ -101,12 +103,12 @@ OWNER NEW INSTRUCTIONS / MANUAL OBSERVATIONS:
 ======================================================================
 AGENT CHECKPOINT (MODELS UPDATE THIS SECTION FREQUENTLY)
 ======================================================================
-What just happened: Completed Stage 3 (`docs/architecture/{PSP_RUST_ARCHITECTURE,DEPENDENCIES_AND_LICENSES,FEASIBILITY_GATE}.txt`) and updated `gemini_flash/INDEX.txt`. Issued formal **CONDITIONAL GO** verdict with 40.0 MiB DRAM / 2.0 MiB VRAM quantitative budgets and 10-step gated roadmap.
-Last checked source path: /mnt/6421-8598/building/PocketMajora/docs/architecture/FEASIBILITY_GATE.txt
-Last verified command / output: Inspected `majora_code/mm/2s2h/resource/type/2shResourceType.h` (`OARR`, `OANM`, `OROM`, `OCOL`, `OSKL`, `OSLB`, `OTXM`, etc.) and verified Stage 3 files on disk.
-Modified files since last commit: Added `docs/architecture/PSP_RUST_ARCHITECTURE.txt`, `docs/architecture/DEPENDENCIES_AND_LICENSES.txt`, `docs/architecture/FEASIBILITY_GATE.txt`, updated `gemini_flash/INDEX.txt` and `handoff.txt`.
-Potential work loss if session ends now: NONE (all Stage 3 files written and committed).
-Exact next command/action: Run Gemini Flash on `gemini_flash/Gemini_Step_01.txt`, or reply `CONTINUE` for Argon Stage 4 (`gemini_flash/Gemini_Step_02.txt`).
+What just happened: Completed Stage 4. Authored all remaining Gemini Flash worker prompts (`gemini_flash/Gemini_Step_02.txt` through `gemini_flash/Gemini_Step_10.txt`) and updated `gemini_flash/INDEX.txt`.
+Last checked source path: /mnt/6421-8598/building/PocketMajora/gemini_flash/INDEX.txt
+Last verified command / output: Verified `Gemini_Step_01.txt` .. `Gemini_Step_10.txt` on disk and committed Stage 4 milestone.
+Modified files since last commit: Added `gemini_flash/Gemini_Step_02.txt` .. `gemini_flash/Gemini_Step_10.txt`, updated `gemini_flash/INDEX.txt` and `handoff.txt`.
+Potential work loss if session ends now: NONE (all Stage 0-4 research, architecture, and Flash step prompts 01..10 are written and committed).
+Exact next command/action: Run Gemini Flash starting on `gemini_flash/Gemini_Step_01.txt` and proceed sequentially through `Gemini_Step_10.txt`.
 
 ======================================================================
 APPEND-ONLY CHANGE LOG
@@ -131,10 +133,18 @@ APPEND-ONLY CHANGE LOG
              runtime + host extractor + vertical-slice Rust translation), and
              wrote `docs/research/02_upstream_reference_matrix.txt`.
 2026-11-16 Gemini Argon (Medium): Completed Stage 3 Architecture & Feasibility
-             Gate. Wrote `docs/architecture/PSP_RUST_ARCHITECTURE.txt`,
+             Gate (`e01332b`). Wrote `docs/architecture/PSP_RUST_ARCHITECTURE.txt`,
              `docs/architecture/DEPENDENCIES_AND_LICENSES.txt`, and
              `docs/architecture/FEASIBILITY_GATE.txt`, plus updated
              `gemini_flash/INDEX.txt`. Formal verdict: **CONDITIONAL GO**.
+2026-11-16 Gemini Argon: Completed Stage 4 per owner request. Authored all
+             remaining Flash implementation prompts (`gemini_flash/Gemini_Step_02.txt`
+             through `gemini_flash/Gemini_Step_10.txt`) covering workspace/schema,
+             ROM/XML extractor (`pmm-extractor`), bounded PSP asset loader (`pmm-assets`),
+             F3DEX2->`sceGu` renderer (`pmm-gfx`), 20 FPS `Graph`/`PadMgr`/`SysFlashrom`
+             (`pmm-game`), 32 kHz audio & suspend/resume (`pmm-audio`), interactive
+             Title/FileSelect, playable Clock Town & 3-Day Clock cycle, and
+             VFPU/cache hardening + release packaging.
 
 ======================================================================
 RECOVERY RULES (IF ARGON OR FLASH FAILS / TOKENS EXPIRE)

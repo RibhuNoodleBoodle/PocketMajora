@@ -2,25 +2,25 @@
 GEMINI FLASH WORKER PROMPT INDEX -- POCKETMAJORA (RUST PSP-3000)
 ======================================================================
 STEP | FILE                            | PREREQUISITE    | STATUS
------+---------------------------------+-----------------+-----------------------
-01   | gemini_flash/Gemini_Step_01.txt | Stage 0-3 PASS  | READY FOR FLASH
+-----+---------------------------------+-----------------+-------------------------------
+01   | gemini_flash/Gemini_Step_01.txt | Stage 0-3 PASS  | READY FOR FLASH (START HERE)
      | (Rust PSP toolchain bootstrap, MEMSIZE=1 EBOOT.PBP, GU/Ctrl/RAM probe)
-02   | gemini_flash/Gemini_Step_02.txt | Step 01 PASS    | QUEUED (Just-in-time)
+02   | gemini_flash/Gemini_Step_02.txt | Step 01 PASS    | AUTHORED & READY (Gated on 01)
      | (Root Cargo workspace, pmm-schema, Partition 2 slab allocator, CI smoke test)
-03   | gemini_flash/Gemini_Step_03.txt | Step 02 + ROM   | QUEUED (Just-in-time)
+03   | gemini_flash/Gemini_Step_03.txt | Step 02 PASS    | AUTHORED & READY (Gated on 02)
      | (Host pmm-extractor CLI: US ROM CRC32/SHA-1 check, Yaz0, XML -> pmm_2s2h.pak)
-04   | gemini_flash/Gemini_Step_04.txt | Step 03 PASS    | QUEUED (Just-in-time)
+04   | gemini_flash/Gemini_Step_04.txt | Step 03 PASS    | AUTHORED & READY (Gated on 03)
      | (PSP pmm-assets streaming loader, __OTR__ hash lookup, 20x reload leak test)
-05   | gemini_flash/Gemini_Step_05.txt | Step 04 PASS    | QUEUED (Just-in-time)
-     | (Rust F3DEX2 -> sceGu renderer proof with real MM display lists & textures)
-06   | gemini_flash/Gemini_Step_06.txt | Step 05 PASS    | QUEUED (Just-in-time)
+05   | gemini_flash/Gemini_Step_05.txt | Step 04 PASS    | AUTHORED & READY (Gated on 04)
+     | (Rust F3DEX2 -> sceGu renderer proof with 3D display lists & textures)
+06   | gemini_flash/Gemini_Step_06.txt | Step 05 PASS    | AUTHORED & READY (Gated on 05)
      | (Graph 20 FPS coroutine loop, PadMgr input, SysFlashrom 128 KiB save state)
-07   | gemini_flash/Gemini_Step_07.txt | Step 06 PASS    | QUEUED (Just-in-time)
+07   | gemini_flash/Gemini_Step_07.txt | Step 06 PASS    | AUTHORED & READY (Gated on 06)
      | (32 kHz ADPCM/envmixer audio thread + power suspend/resume & HOME callbacks)
-08   | gemini_flash/Gemini_Step_08.txt | Step 07 PASS    | QUEUED (Just-in-time)
+08   | gemini_flash/Gemini_Step_08.txt | Step 07 PASS    | AUTHORED & READY (Gated on 07)
      | (Interactive Title Screen -> File Select 3-slot save creation & reload)
-09   | gemini_flash/Gemini_Step_09.txt | Step 08 PASS    | QUEUED (Just-in-time)
+09   | gemini_flash/Gemini_Step_09.txt | Step 08 PASS    | AUTHORED & READY (Gated on 08)
      | (Playable Clock Town vertical slice + 3-Day Clock cycle & HUD regression)
-10   | gemini_flash/Gemini_Step_10.txt | Step 09 PASS    | QUEUED (Just-in-time)
+10   | gemini_flash/Gemini_Step_10.txt | Step 09 PASS    | AUTHORED & READY (Gated on 09)
      | (VFPU/cache/crash hardening + standalone PSP-3000 release packaging)
 ======================================================================

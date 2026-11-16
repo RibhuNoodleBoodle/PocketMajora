@@ -1,0 +1,108 @@
+======================================================================
+GEMINI FLASH IMPLEMENTATION PROMPT -- STEP 05
+MILESTONE: 05 -- Rust F3DEX2 -> PSP `sceGu` Renderer (`pmm-gfx`) & Scene/Mesh Rendering Proof
+Architect: Gemini Argon | Implementer: Gemini Flash
+Repository Root: /mnt/6421-8598/building/PocketMajora
+======================================================================
+
+1. MISSION & EXACT SCOPE
+----------------------------------------------------------------------
+Prerequisite Gate: Step 04 MUST be `PASS`.
+
+Your objective in Step 05:
+1. Create `crates/pmm-gfx` (`#![no_std]` + `alloc`), implementing the Rust
+   F3DEX2 display list interpreter and PSP `sceGu` hardware renderer defined in
+   `docs/architecture/PSP_RUST_ARCHITECTURE.txt`:
+   - VRAM Layout Manager (`2 MiB` eDRAM `0x04000000..0x041FFFFF`):
+     * Triple-buffered `512 x 272` `GU_PSM_5650` LCD framebuffers (`3 * 278,528` B)
+     * 16-bit Z-buffer (`278,528` B at `0x040CC000`)
+     * GPU motion-blur history buffer (`278,528` B at `0x04110000`)
+     * `688 KiB` hot texture/TLUT scratch region in VRAM (`0x04154000..0x041FFFFF`)
+   - GE Command Ring & Native Vertex Cache in Pool 3 (`RendererCache` 6 MiB):
+     * Double-buffered `512 KiB` 64-byte aligned GE display lists (`sceGuStart(GuContextType::Direct, ...)`).
+     * Native 36-byte PSP vertex format (`f32 u, v`, `u32 color_abgr`, `i8 nx, ny, nz, pad`, `f32 x, y, z` or `GU_TEXTURE_32BITF | GU_COLOR_8888 | GU_VERTEX_32BITF`).
+     * Immutable mesh cache for static room display lists + per-frame dynamic vertex ring.
+   - F3DEX2 Opcode Interpreter (`process_display_list`):
+     * Matrix stack (`G_MTX`, `G_POPMTX`): converts N64 16.16 fixed-point `Mtx` (64 B)
+       to `ScePspFMatrix4` (`f32` 4x4) and multiplies MVP matrices (with software near-plane
+       clipping for triangles spanning `z < near` so PSP hardware guard-band never overflows).
+     * Vertex & Triangle emission (`G_VTX = 0x01`, `G_TRI1 = 0x05`, `G_TRI2 = 0x06`,
+       `G_QUAD = 0x07`, `G_DL = 0xDE`, `G_ENDDL = 0xDF`): resolves segmented or
+       `ResourceId` pointers via `pmm-assets`, transforms/clips vertices, and batches
+       `sceGuDrawArray(GuPrimitive::Triangles, ...)`.
+     * Texture & TMEM / Tile state (`G_SETIMG`, `G_SETTILE`, `G_LOADBLOCK`, `G_LOADTLUT`,
+       `G_SETTILESIZE`, `G_TEXRECT`): supports `RGBA16` (`GU_PSM_5551`), `RGBA32`
+       (`GU_PSM_8888`), `CI4`/`CI8` (`GU_PSM_T4`/`GU_PSM_T8` + `sceGuClutLoad`), and
+       pre-expanded `IA`/`I` textures; handles Clock Town 12-bit wrapped tile bounds
+       and scrolling `sceGuTexOffset` / `sceGuTexScale`.
+     * Combiner, Blending, Depth, Scissor & Motion Blur (`G_SETCOMBINE`, `G_SETPRIMCOLOR`,
+       `G_SETENVCOLOR`, `G_SETOTHERMODE_L/H`, `G_SETSCISSOR`, `G_FILLRECT`):
+       - Maps opaque (`ZMODE_OPA`), translucent (`ZMODE_XLU`), and decal (`ZMODE_DEC`
+         with depth bias) passes to `sceGuDepthMask`/`sceGuBlendFunc`.
+       - Implements GPU-local motion-blur history capture via `sceGuCopyImage` and
+         consistent scene scissor / letterbox endpoint rounding (`0..32` bar heights).
+2. Run host unit tests on the F3DEX2 decoder, matrix conversion, near-plane clipper,
+   12-bit tile wrapping, and scissor rounding, AND run a 180-frame 3D scene rendering
+   proof in PPSSPP (`PSPModel = 1`), writing `step05_gfx.log`.
+
+2. PRE-FLIGHT CHECKS & MANDATORY PREPARATION
+----------------------------------------------------------------------
+1. Read `handoff.txt` and `docs/architecture/PSP_RUST_ARCHITECTURE.txt`.
+2. Run:
+   `pwd && git rev-parse --show-toplevel && git status --short --branch && git rev-parse HEAD`
+3. Confirm Step 04 is `PASS`. Update `handoff.txt` (`LAST ATTEMPTED: STEP 05 IN PROGRESS`).
+
+3. ALLOWED FILE WRITES & TARGET PATHS
+----------------------------------------------------------------------
+- `Cargo.toml`, `Cargo.lock`
+- `crates/pmm-gfx/Cargo.toml`, `crates/pmm-gfx/src/**`
+- `crates/pmm-schema/src/**`, `crates/pmm-assets/src/**`
+- `src/main.rs`
+- `scripts/test_step05.sh`
+- `docs/research/05_step05_verification_log.txt`
+- `gemini_flash/INDEX.txt`, `handoff.txt`
+
+4. COMPILE & TEST COMMANDS (HOST + PPSSPP)
+----------------------------------------------------------------------
+```bash
+export PATH="$HOME/.cargo/bin:$PATH"
+cargo test --manifest-path crates/pmm-gfx/Cargo.toml --target x86_64-unknown-linux-gnu
+./scripts/build_eboot.sh
+```
+Deploy `EBOOT.PBP` + `data/pmm_2s2h.pak` to PPSSPP and run with `slim_test.ini`.
+
+5. MEASURABLE ACCEPTANCE CRITERIA & NEGATIVE TESTS
+----------------------------------------------------------------------
+1. Host unit tests in `crates/pmm-gfx` pass (`>= 10` tests):
+   - N64 16.16 fixed-point `Mtx` -> `f32` matrix conversion accuracy (identity,
+     translation, scale, negative coordinates).
+   - Near-plane frustum clipper: triangle completely behind near plane emits `0`
+     triangles; triangle with 1 vertex behind near plane clips to `2` valid triangles;
+     triangle with 2 vertices behind near plane clips to `1` valid triangle.
+   - 12-bit tile coordinate wrapping test (Clock Town wall wrap across `0` / `4096`).
+   - Letterbox bar endpoint & scene scissor rounding test for bar sizes `0..=32`
+     (verifying zero uncovered pixel gap between letterbox rect and scene scissor).
+   - Malformed / recursive display list depth limit negative test (branch depth > 18
+     cleanly terminates with `Err(GfxError::DisplayListDepthExceeded)` instead of
+     overflowing the PSP stack).
+2. PPSSPP `step05_gfx.log` records across 180 rendered frames:
+   - `VRAM_LAYOUT_TOTAL_BYTES: 2097152`
+   - `FRAMES_RENDERED: 180`
+   - `TOTAL_GBI_COMMANDS_DECODED: <count>` (must be `> 1000`)
+   - `TOTAL_TRIANGLES_SUBMITTED: <count>` (must be `> 500`)
+   - `TEXTURES_UPLOADED_AND_CACHED: <count>` (must be `>= 2`)
+   - `STATIC_MESH_CACHE_HITS: <count>` (must be `>= 170`)
+   - `MOTION_BLUR_GPU_COPYIMAGE_PASSES: <count>` (must be `> 0`)
+   - `NEGATIVE_DL_DEPTH_OVERFLOW_GUARD: EXPECTED_ERR_CAUGHT`
+   - `STATUS: PASS`
+3. Record all host and PPSSPP logs in `docs/research/05_step05_verification_log.txt`.
+
+6. NO-CHEATING RULES, HANDOFF UPDATE, & GIT COMMIT
+----------------------------------------------------------------------
+- Do not bypass the F3DEX2 interpreter by calling hardcoded `sceGuDrawArray` in
+  `main.rs`; all rendered geometry MUST flow through `pmm_gfx::Renderer::process_display_list`
+  reading `GfxWord`, `Vtx`, `Mtx`, and `OTEX` resources from `pmm-assets`.
+- Update `handoff.txt` and `gemini_flash/INDEX.txt`, run `git diff --check` and
+  `git status --short`, commit (`Step 05: add pmm-gfx F3DEX2 to sceGu renderer and 180-frame 3D scene proof`),
+  and STOP after Step 05.
+======================================================================

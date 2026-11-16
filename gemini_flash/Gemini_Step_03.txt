@@ -1,0 +1,113 @@
+======================================================================
+GEMINI FLASH IMPLEMENTATION PROMPT -- STEP 03
+MILESTONE: 03 -- User ROM Validation, Host Asset Extractor (`pmm-extractor`), & `pmm_2s2h.pak` Contract
+Architect: Gemini Argon | Implementer: Gemini Flash
+Repository Root: /mnt/6421-8598/building/PocketMajora
+======================================================================
+
+1. MISSION & EXACT SCOPE
+----------------------------------------------------------------------
+Prerequisite Gate: Step 02 MUST be `PASS`.
+
+Your objective in Step 03:
+1. Build the host-side Rust CLI tool `tools/pmm-extractor` (`std`, `x86_64-unknown-linux-gnu`)
+   that implements the legal asset extraction and big-endian -> little-endian
+   pack compilation pipeline defined in `docs/architecture/PSP_RUST_ARCHITECTURE.txt`:
+   - Subcommand `verify-rom <path>`:
+     * Reads an N64 ROM file, detects byte order from the first 4 bytes:
+       - `.z64` big-endian (`0x80, 0x37, 0x12, 0x40`)
+       - `.v64` byte-swapped (`0x37, 0x80, 0x40, 0x12`)
+       - `.n64` little-endian word-swapped (`0x40, 0x12, 0x37, 0x80`)
+     * Normalizes to big-endian `.z64` in memory.
+     * Verifies internal N64 header title (`"THE LEGEND OF ZELDA"` / `"MAJORA'S MASK"`
+       at offset `0x20`), game ID (`"NZSE"` at `0x3B`), and checksums:
+       - 32 MiB (`0x02000000` bytes) compressed US 1.0 ROM: CRC32 `0xB428D8A7`
+       - 64 MiB (`0x04000000` bytes) decompressed US 1.0 ROM: SHA-1
+         `d6133ace5afaa0882cf214cf88daba39e266c078`
+   - Pure-Rust `Yaz0` decompressor + `dmadata` table parser:
+     * Locates `dmadata` at ROM offset `0x1A500` (1,552 entries of 16 bytes:
+       `vrom_start`, `vrom_end`, `rom_start`, `rom_end`).
+     * Decompresses `Yaz0`-compressed segments (`b"Yaz0"` header + uncompressed
+       size + RLE/LZ sliding window) and verifies decompressed length == `vrom_end - vrom_start`.
+   - XML Asset Schema Parser & Little-Endian Pack Builder (`extract --rom <path> --xml-dir majora_code/mm/assets/xml --out <pak_path>`):
+     * Parses `majora_code/mm/assets/xml/**/*.xml` (1,325 XML files defining
+       `<Root>`, `<File Name="..." BaseAddress="..." RangeStart="..." RangeEnd="...">`,
+       `<Texture>`, `<Array>`, `<DList>`, `<Blob>`, `<Scene>`, `<Room>`, `<Collision>`,
+       `<Skeleton>`, `<Limb>`, `<Animation>`, `<PlayerAnimation>`, `<TextMM>`).
+     * Extracts each declared resource from the corresponding decompressed VROM
+       segment, converts big-endian N64 structures (`Vtx`, `Gfx`, `Mtx`, `RGBA16`,
+       `CollisionHeader`, `Scene`/`Room` commands, `TextMM` message tables) to
+       16-byte aligned little-endian payloads, and writes `pmm_2s2h.pak` using
+       `crates/pmm-schema`'s `PmmPakHeader` + sorted `PmmPakEntry` index table.
+   - Subcommand `build-synthetic-fixture --out <pak_path>` (for ROM-less CI &
+     negative testing when the user's ROM is not yet placed on disk):
+     * Generates a clearly-marked non-copyrighted synthetic test pack
+       (`rom_crc32 = 0x54455354` `"TEST"`) containing synthetic `OTXM` messages,
+       `OVTX` vertices, `ODLT` F3DEX2 display lists, `OTEX` procedural checker/gradient
+       textures, and a synthetic `OROM`/`OCOL` test room, plus corrupt-fixture
+       generators for negative testing.
+2. Search for the owner's legal US N64 ROM in standard untracked paths
+   (`baserom.z64`, `baseroms/n64-us/baserom.z64`, `data/basrom.z64`, `data/baserom.z64`).
+   - If the owner's US ROM IS present: run `pmm-extractor verify-rom` and
+     `pmm-extractor extract` to produce `data/pmm_2s2h.pak` (untracked), and log
+     real extracted resource counts and byte sizes.
+   - If the owner's US ROM is NOT yet on disk: record `ROM_EXTRACTION: BLOCKED_ON_USER_ROM`
+     honestly in `handoff.txt`, run all unit/integration tests on the XML parser
+     (`1,325` real XML files in `majora_code/mm/assets/xml/`), Yaz0 decompressor,
+     `.v64`/`.n64` endian normalizer, and synthetic pack generator so the pipeline
+     is 100% verified and ready for one-command execution as soon as the ROM is supplied.
+
+2. PRE-FLIGHT CHECKS & MANDATORY PREPARATION
+----------------------------------------------------------------------
+1. Read `handoff.txt`, `docs/architecture/PSP_RUST_ARCHITECTURE.txt`, and
+   `docs/architecture/DEPENDENCIES_AND_LICENSES.txt`.
+2. Run:
+   `pwd && git rev-parse --show-toplevel && git status --short --branch && git rev-parse HEAD`
+3. Verify `.gitignore` excludes `*.z64`, `*.n64`, `*.v64`, `*.rom`, `*.pak`, `data/`.
+4. Update `handoff.txt` (`LAST ATTEMPTED: STEP 03 IN PROGRESS`) BEFORE coding.
+
+3. ALLOWED FILE WRITES & TARGET PATHS
+----------------------------------------------------------------------
+- `Cargo.toml`, `Cargo.lock`
+- `crates/pmm-schema/src/**`
+- `tools/pmm-extractor/Cargo.toml`, `tools/pmm-extractor/src/**`
+- `scripts/test_step03.sh`
+- `docs/research/03_step03_verification_log.txt`
+- `gemini_flash/INDEX.txt`, `handoff.txt`
+(NEVER stage or commit any `.z64`, `.n64`, `.v64`, or `.pak` file!)
+
+4. COMPILE & TEST COMMANDS
+----------------------------------------------------------------------
+```bash
+export PATH="$HOME/.cargo/bin:$PATH"
+cargo test --manifest-path tools/pmm-extractor/Cargo.toml --target x86_64-unknown-linux-gnu
+cargo run --manifest-path tools/pmm-extractor/Cargo.toml --target x86_64-unknown-linux-gnu -- audit-xml majora_code/mm/assets/xml
+cargo run --manifest-path tools/pmm-extractor/Cargo.toml --target x86_64-unknown-linux-gnu -- build-synthetic-fixture --out target/test_synthetic.pak
+```
+
+5. MEASURABLE ACCEPTANCE CRITERIA & NEGATIVE TESTS
+----------------------------------------------------------------------
+1. `tools/pmm-extractor` unit & integration tests pass (`>= 10` tests):
+   - Endianness normalization test: `.z64`, `.v64`, and `.n64` headers normalize
+     to identical big-endian bytes; invalid magic (`0xDEADBEEF`) returns `Err`.
+   - Wrong-CRC32 negative test: 32 MiB buffer with wrong CRC32 is rejected with
+     explicit expected vs actual CRC32 diagnostic.
+   - `Yaz0` decompression test: known compressed Yaz0 block decompresses to exact
+     expected bytes; truncated Yaz0 stream returns `Err` without panic.
+   - Real XML schema audit (`audit-xml majora_code/mm/assets/xml`): parses all
+     `1,325` XML files in `majora_code/mm/assets/xml/` with `0` parse errors and
+     logs total declared `<DList>`, `<Texture>`, `<Vertex>`, `<Animation>`,
+     `<Skeleton>`, `<Scene>`, `<Room>`, and `<Collision>` descriptors.
+   - `build-synthetic-fixture` produces `target/test_synthetic.pak` with valid
+     `PmmPakHeader`, 16-byte aligned payloads, and sorted `ResourceId` index.
+2. Log all command outputs in `docs/research/03_step03_verification_log.txt`.
+
+6. NO-CHEATING RULES, HANDOFF UPDATE, & GIT COMMIT
+----------------------------------------------------------------------
+- NEVER claim the owner's US ROM was extracted if the ROM file is absent;
+  explicitly distinguish `XML_AND_EXTRACTOR_TESTS: PASS` from
+  `USER_ROM_EXTRACTION: PASS` or `NOT RUN (ROM absent)`.
+- Update `handoff.txt` and `gemini_flash/INDEX.txt`, verify `git status --short`
+  has zero binary/ROM/pack files, commit (`Step 03: add host pmm-extractor CLI, Yaz0 decoder, and 2S2H XML parser`),
+  and STOP after Step 03.
+======================================================================

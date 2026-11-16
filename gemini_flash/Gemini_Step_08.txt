@@ -1,0 +1,116 @@
+======================================================================
+GEMINI FLASH IMPLEMENTATION PROMPT -- STEP 08
+MILESTONE: 08 -- Interactive Title Screen (`ovl_title`) & File Select (`ovl_file_choose`) Save/Menu Flow
+Architect: Gemini Argon | Implementer: Gemini Flash
+Repository Root: /mnt/6421-8598/building/PocketMajora
+======================================================================
+
+1. MISSION & EXACT SCOPE
+----------------------------------------------------------------------
+Prerequisite Gate: Step 07 MUST be `PASS`.
+
+Your objective in Step 08:
+1. Implement the 2S2H-derived Majora's Mask boot/title/file-select state flow in
+   `crates/pmm-game` (`majora_code/mm/src/code/z_title_setup.c`,
+   `majora_code/mm/src/overlays/gamestates/ovl_title/z_title.c`,
+   `majora_code/mm/src/overlays/gamestates/ovl_file_choose/z_file_select.c`,
+   `z_file_nameset_PAL.c`, `z_file_copy_erase.c`):
+   - `TitleSetupState` (`z_title_setup.c`):
+     * Initializes `gSaveContext`, loads `OTRMessage_Init()` (`sMessageTableNES`
+       and `sMessageTableCredits` from `OTXM` resources in `pmm-assets`), and
+       transitions to `ConsoleLogoState` (`ovl_title`).
+   - `ConsoleLogoState` (`ovl_title` / `z_title.c`):
+     * Renders the N64 / Majora's Mask logo fade-in, hold, and fade-out sequence
+       (`coverAlpha`, `addAlpha`, `visibleDuration` timer = 200 ticks, or early
+       advance on `START_BUTTON` / `A_BUTTON` press).
+     * Emits F3DEX2 display list commands rendered through `pmm-gfx` and transitions
+       to `FileSelectState` (`ovl_file_choose`).
+   - `FileSelectState` (`ovl_file_choose` / `z_file_select.c`):
+     * Initializes `SysFlashrom_InitFlash()` and reads the 3 save slots (plus
+       backup and owl-save headers) from `mm-psp-save.bin`.
+     * Implements the authentic `ConfigMode` state machine:
+       - `CM_FADE_IN_START` -> `CM_MAIN_MENU` (Select File 1 / File 2 / File 3,
+         Copy, Erase, Options)
+       - `CM_NAME_ENTRY` (8-character player name entry grid + Backspace + END;
+         defaults to `"Link"` if confirmed quickly)
+       - Writes the newly created file via `SysFlashrom_WriteAsync` -> waits for
+         the two-second confirmation timer (`40` ticks at 20 FPS) and
+         `SysFlashrom_IsBusy() == 0` / `SysFlashrom_AwaitResult() == 0` before
+         returning to `CM_MAIN_MENU` with the populated save slot (`ZELDA3` magic,
+         3 hearts `0x30`, `"Link"`, Dawn of First Day `0x4000`, owl status).
+       - `CM_COPY_SOURCE` / `CM_COPY_DEST` / `CM_ERASE_SELECT` / `CM_OPTIONS_MENU`
+         (Audio: Stereo/Mono/Headset/Surround, Z-Target: Switch/Hold).
+       - Selecting an existing valid save slot and pressing `A_BUTTON` / `START`
+         loads the slot into `gSaveContext` and transitions `next_gamestate` to
+         `OpeningState` / `DayTelopState` (`ovl_daytelop` "Dawn of the First Day -72 Hours Remain-").
+2. Support both interactive PSP controller input (`PadMgr`) and a deterministic
+   scripted-input verification sequence (`ScriptedPadInjector`) so automated
+   PPSSPP regression runs can drive the exact menu navigation (`Logo -> Select
+   Empty Slot 0 -> Enter Name "Link" -> Confirm Save -> Verify Flashrom Persist ->
+   Copy Slot 0 to Slot 1 -> Erase Slot 1 -> Launch Slot 0 -> DayTelop -> PlayState`)
+   and log every state transition to `step08_title_fileselect.log`.
+
+2. PRE-FLIGHT CHECKS & MANDATORY PREPARATION
+----------------------------------------------------------------------
+1. Read `handoff.txt`, `docs/architecture/PSP_RUST_ARCHITECTURE.txt`, and inspect
+   `majora_code/mm/src/overlays/gamestates/ovl_title/z_title.c` and
+   `majora_code/mm/src/overlays/gamestates/ovl_file_choose/z_file_select.h`.
+2. Run:
+   `pwd && git rev-parse --show-toplevel && git status --short --branch && git rev-parse HEAD`
+3. Confirm Step 07 is `PASS`. Update `handoff.txt` (`LAST ATTEMPTED: STEP 08 IN PROGRESS`).
+
+3. ALLOWED FILE WRITES & TARGET PATHS
+----------------------------------------------------------------------
+- `Cargo.toml`, `Cargo.lock`
+- `crates/pmm-game/src/**`
+- `crates/pmm-gfx/src/**`, `crates/pmm-audio/src/**`, `crates/pmm-assets/src/**`
+- `src/main.rs`
+- `scripts/test_step08.sh`
+- `docs/research/08_step08_verification_log.txt`
+- `gemini_flash/INDEX.txt`, `handoff.txt`
+
+4. COMPILE & TEST COMMANDS (HOST + PPSSPP)
+----------------------------------------------------------------------
+```bash
+export PATH="$HOME/.cargo/bin:$PATH"
+cargo test --manifest-path crates/pmm-game/Cargo.toml --target x86_64-unknown-linux-gnu
+./scripts/build_eboot.sh
+```
+Deploy `EBOOT.PBP` to PPSSPP (`PSPModel = 1`), run, and inspect `step08_title_fileselect.log`
+and `mm-psp-save.bin`.
+
+5. MEASURABLE ACCEPTANCE CRITERIA & NEGATIVE TESTS
+----------------------------------------------------------------------
+1. Host unit tests in `crates/pmm-game` pass (`>= 12` tests):
+   - `ConsoleLogoState` fade/timer progression and button skip transition.
+   - `FileSelectState` `ConfigMode` transitions:
+     * Selecting empty slot transitions to `CM_NAME_ENTRY`.
+     * Entering `"Link"` and confirming writes valid `ZELDA3` slot 0 with checksum,
+       waits for the 40-tick (2.0s) confirmation deadline + `SysFlashrom_AwaitResult()`,
+       and returns to `CM_MAIN_MENU`.
+     * Copy slot 0 -> slot 1 produces identical valid save in slot 1.
+     * Erase slot 1 clears `newf` magic and resets slot 1 to empty.
+     * Corrupt save slot checksum negative test: if slot 2 primary checksum is
+       corrupted on disk, `FileSelectState` automatically falls back to the backup
+       save page or marks the slot invalid without crashing.
+2. PPSSPP `step08_title_fileselect.log` records:
+   - `STATE_01: TitleSetup -> ConsoleLogo`
+   - `STATE_02: ConsoleLogo rendered frames=..., alpha_fade=OK -> FileSelect`
+   - `FILESELECT_CREATE_SLOT0: OK(name="Link", hearts=0x30, time=0x4000, wait_ticks=40)`
+   - `FILESELECT_COPY_SLOT0_TO_SLOT1: OK`
+   - `FILESELECT_ERASE_SLOT1: OK(slot1_valid=false)`
+   - `NEGATIVE_CORRUPT_SLOT2_RECOVERY: OK(fallback_or_invalid_handled)`
+   - `FILESELECT_LAUNCH_SLOT0: OK -> DayTelop("Dawn of the First Day")`
+   - `FRAMES_RENDERED_TOTAL: <count>` (`>= 180`)
+   - `STATUS: PASS`
+3. Record all host and PPSSPP logs in `docs/research/08_step08_verification_log.txt`.
+
+6. NO-CHEATING RULES, HANDOFF UPDATE, & GIT COMMIT
+----------------------------------------------------------------------
+- Every state transition in `step08_title_fileselect.log` must be driven through
+  `Graph::run_frame` executing `TitleSetupState`, `ConsoleLogoState`, `FileSelectState`,
+  and `DayTelopState` while emitting real F3DEX2 -> `sceGu` frames and `SysFlashrom` I/O.
+- Update `handoff.txt` and `gemini_flash/INDEX.txt`, verify `git diff --check` and
+  `git status --short`, commit (`Step 08: implement ovl_title, ovl_file_choose 3-slot save/copy/erase, and ovl_daytelop`),
+  and STOP after Step 08.
+======================================================================
