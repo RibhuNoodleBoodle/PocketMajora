@@ -1,0 +1,9 @@
+======================================================================
+GEMINI FLASH WORKER PROMPT INDEX -- POCKETMAJORA (RUST PSP-3000)
+======================================================================
+STEP | FILE                          | PREREQUISITE | STATUS
+-----+-------------------------------+--------------+-----------------
+01   | gemini_flash/Gemini_Step_01.txt | Stage 0-1    | READY FOR FLASH
+     | (Rust PSP toolchain bootstrap, MEMSIZE=1 EBOOT.PBP, GU/Ctrl/RAM probe)
+02   | TBD (Generated after Step 01) | Step 01 PASS | NOT AUTHORED YET
+======================================================================
