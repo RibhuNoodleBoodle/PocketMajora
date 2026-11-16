@@ -1,0 +1,136 @@
+======================================================================
+STAGE 3: FEASIBILITY GATE & GO / CONDITIONAL GO VERDICT (`FEASIBILITY_GATE.txt`)
+Date: 2026-11-16
+Architect: Gemini Argon (Medium)
+Repository Root: /mnt/6421-8598/building/PocketMajora
+======================================================================
+
+1. FORMAL ARCHITECTURAL VERDICT: **CONDITIONAL GO**
+----------------------------------------------------------------------
+Verdict: **CONDITIONAL GO (Proceed through gated incremental Flash milestones Step 01 -> Step 10)**
+
+Why **CONDITIONAL GO** (and neither blind `GO` nor `NO-GO`):
+1) Hardware & Memory Feasibility is Proven in Principle:
+   - PSP-3000 with `MEMSIZE=1` in `PARAM.SFO` unlocks ~50-52 MiB of Partition 2 User DRAM
+     plus 2 MiB of embedded eDRAM (`0x04000000`).
+   - `AndrewAltimit/rust-psp` (`e4cc06f6` on `nightly-2026-04-13`) provides a working
+     `mipsel-sony-psp` target, an 8 MiB static heap (`SIMPLE_ALLOCATOR`) + kernel-block
+     bypass (`>= 256 KiB` via `sceKernelAllocPartitionMemory`), complete `sceGu`/`sceGum`/
+     `sceAudio`/`sceCtrl`/`sceIo`/`sceRtc` bindings, and inline `vfpu_asm!`.
+   - Our quantitative memory budget (`docs/architecture/PSP_RUST_ARCHITECTURE.txt`) fits
+     comfortably in 40.0 MiB of User DRAM (~10 MiB safety margin) and 2.0 MiB of VRAM
+     (triple-buffered 16-bit 512x272 LCD + 16-bit Z-buffer + GPU motion-blur buffer +
+     688 KiB hot texture/TLUT VRAM scratch).
+2) Why Conditions Apply (Must Be Verified Gate-by-Gate):
+   - Condition 1 (Step 01 Toolchain & Slim RAM Gate):
+     `rustc` and `cargo-psp` are not yet installed on the host, and `mksfo` requires adding
+     `"MEMSIZE"` (`EntryType::Dword`) so `EBOOT.PBP` unlocks >24 MiB user RAM in PPSSPP
+     (`PSPModel = 1`) and on physical PSP-3000. Step 01 must pass and log real free memory
+     (`sceKernelTotalFreeMemSize() > 25,165,824` bytes) before Step 02 begins.
+   - Condition 2 (Step 03 User ROM Availability Gate):
+     No N64 ROM file (`*.z64`/`*.n64`/`*.v64`) is currently present on `/mnt/6421-8598` or
+     `/home/ribhu`. Steps 01 and 02 (toolchain probe + workspace/schema/synthetic asset
+     pipeline) require NO ROM, but before Step 03 can extract real Majora's Mask assets,
+     the owner must place their legal US 1.0 ROM (`CRC32 0xB428D8A7` or decompressed SHA-1
+     `d6133ace5afaa0882cf214cf88daba39e266c078`) at the configured untracked path.
+   - Condition 3 (Vertical-Slice Translation Discipline):
+     `majora_code/mm/src/` contains 568,351 lines of C (including 635 actor overlays at
+     429,131 LOC). Translating all 635 actors at once is impossible. Route A succeeds by
+     enforcing strict vertical slices:
+     * Boot/Kernel/GU Probe (Step 01)
+     * Workspace + 2S2H Binary Schema + Bounded Asset Cache (Step 02 / Step 04)
+     * Host US ROM Validation & `pmm-extractor` -> `pmm_2s2h.pak` (Step 03)
+     * Rust F3DEX2 -> `sceGu` Renderer Proof on Real MM Display Lists/Rooms (Step 05)
+     * `Graph` 20 FPS Coroutine Loop, Controller, & `SysFlashrom` 128 KiB Save (Step 06)
+     * 32 kHz Audio Synthesizer & Power Suspend/Resume (Step 07)
+     * Interactive Title Screen (`ovl_title`) & File Select (`ovl_file_choose`) (Step 08)
+     * Playable Clock Town Vertical Slice + 3-Day Clock Cycle Regression (Step 09)
+     * Crash/Heap/Performance Hardening & Physical PSP-3000 Packaging (Step 10)
+
+2. QUANTITATIVE PERFORMANCE & RESOURCE TARGETS (TARGETS UNTIL MEASURED)
+----------------------------------------------------------------------
+Per Master Prompt Section D (Stage 3):
+- Simulation Tick Rate Target:
+  * **20.0 FPS** (`50.0 ms` per logic tick = 3 VBlanks on 60 Hz LCD) during 3D `PlayState`
+    gameplay, matching original N64 Majora's Mask (`framerateDivisor = 3`) so the 3-Day
+    Clock (`gSaveContext.save.time`), actor schedules (`z_en_hy`), and cutscene timings
+    remain 100% authentic.
+  * **30.0 / 60.0 FPS** (`framerateDivisor = 2` or `1`) in lightweight 2D/menu states where
+    original MM sets `framerateDivisor < 3`.
+- CPU Budget per 50.0 ms (20 FPS) Tick on 333 MHz Allegrex (`~16.65M` cycles/tick):
+  * Game State + Collision + Actor Simulation: `<= 15.0 ms`
+  * F3DEX2 Display List Interpretation + VFPU Transform/Clip + `sceGu` Emission: `<= 15.0 ms`
+  * 32 kHz Audio Synthesis (`1,600` stereo samples per 50 ms tick): `<= 6.0 ms`
+  * Memory Stick Streaming / Sync Overhead: `<= 4.0 ms`
+  * Total Target Frame Time: `<= 40.0 ms` (leaving `>= 10.0 ms` margin before the 3rd VBlank).
+- Memory Ceiling Targets:
+  * Peak Partition 2 User Memory Allocated: `<= 40.0 MiB` (leaving `>= 10.0 MiB` free in
+    `sceKernelTotalFreeMemSize()` on PSP-3000).
+  * Peak VRAM Allocated: `<= 2,097,152` bytes (2.0 MiB eDRAM).
+  * Runtime Heap Fragmentation after 10 Scene/Room Transitions: `0` leaked bytes (verified
+    by comparing `sceKernelTotalFreeMemSize()` and slab watermarks across scene reloads).
+
+3. RISK REGISTER & MITIGATIONS
+----------------------------------------------------------------------
++----+-----------------------------------------+----------+----------------------------------------------+
+| ID | Risk Description                        | Severity | Concrete Mitigation                          |
++----+-----------------------------------------+----------+----------------------------------------------+
+| R1 | `mksfo` in upstream `cargo-psp` lacks   | HIGH     | Patch `tools/rust-psp/cargo-psp/src/bin/     |
+|    | `"MEMSIZE"` key -> EBOOT stuck at 24MB  |          | mksfo.rs` in Step 01 and verify via PPSSPP   |
+|    | Fat RAM limit.                          |          | `boot_probe.log` (`total_free > 24 MiB`).    |
++----+-----------------------------------------+----------+----------------------------------------------+
+| R2 | N64 Segment `0x08..0x0B` addresses      | HIGH     | Use typed `ResourceId(u64)` handles in Rust  |
+|    | overlap PSP user RAM (`0x08800000..`).  |          | and bounds-checked segment table resolution  |
+|    |                                         |          | in `pmm-gfx` / `pmm-assets`.                 |
++----+-----------------------------------------+----------+----------------------------------------------+
+| R3 | PSP hardware guard-band clipping fails  | MEDIUM   | Clip triangles crossing the near/frustum     |
+|    | when polygons cross behind camera (`z<0`)|         | planes in Rust/VFPU before `sceGuDrawArray`. |
++----+-----------------------------------------+----------+----------------------------------------------+
+| R4 | Memory Stick `SceUID` file descriptors  | MEDIUM   | Close `pmm_2s2h.pak` handle in power suspend |
+|    | become invalid after PSP sleep/suspend. |          | callback and reopen + seek on resume.        |
++----+-----------------------------------------+----------+----------------------------------------------+
+| R5 | Unaligned 16/32-bit loads from packed   | MEDIUM   | Enforce 16-byte payload alignment in         |
+|    | N64 assets trigger MIPS `ADEL` crash.   |          | `pmm_2s2h.pak` and verify with host tests.   |
++----+-----------------------------------------+----------+----------------------------------------------+
+| R6 | PPSSPP passes tests that fail on real   | MEDIUM   | Mark all milestones `REAL PSP-3000: UNTESTED`|
+|    | PSP-3000 hardware (cache coherency,     |          | until owner runs EBOOT on hardware; always   |
+|    | `sceKernelDcacheWritebackInvalidateRange`)|        | flush D-cache before `sceGu` DMA reads.      |
++----+-----------------------------------------+----------+----------------------------------------------+
+
+4. GATED FLASH IMPLEMENTATION ROADMAP (`gemini_flash/INDEX.txt`)
+----------------------------------------------------------------------
+1. **Step 01 (`gemini_flash/Gemini_Step_01.txt` -- ALREADY AUTHORED & READY):**
+   Rust toolchain bootstrap (`nightly-2026-04-13`), `mksfo` `MEMSIZE=1` patch, minimal
+   `EBOOT.PBP` proving >24 MiB Slim RAM, `sceGu` frame rendering, controller polling, and
+   PPSSPP Fat vs Slim verification logs (`docs/research/01_step01_verification_log.txt`).
+2. **Step 02 (Authored after Step 01 PASS):**
+   Root Cargo workspace (`crates/pmm-schema`, `crates/pmm-assets`, `tools/pmm-extractor`
+   skeleton), 2S2H resource binary schema, deterministic PSP Partition 2 block allocator,
+   and automated host + PPSSPP smoke test script.
+3. **Step 03 (Requires Owner US N64 ROM):**
+   User US 1.0 ROM (`CRC32 0xB428D8A7` / SHA-1 `d6133ace...`) validation, Yaz0 `dmadata`
+   decompression, `majora_code/mm/assets/xml/` parsing, and generation of untracked
+   little-endian `data/pmm_2s2h.pak`.
+4. **Step 04:**
+   Bounded Rust `ResourceMgr` (`pmm-assets`) streaming loader on PSP, loading real
+   `pmm_2s2h.pak` resources (`OTXM` text, `OARR` textures/display lists, `OROM` scenes)
+   within fixed RAM slabs with zero fragmentation across 20 load/unload cycles.
+5. **Step 05:**
+   Rust F3DEX2 -> `sceGu` renderer (`pmm-gfx`) rendering real extracted Majora's Mask
+   display lists, textures/TLUTs, and a static Clock Town room in PPSSPP with interactive
+   camera inspection.
+6. **Step 06:**
+   2S2H `Graph` 20 FPS coroutine loop, `PadMgr` input mapping, `SysFlashrom` 128 KiB save
+   state machine (`mm-psp-save.bin`), and RTC frame pacing.
+7. **Step 07:**
+   32 kHz ADPCM/envmixer audio backend (`pmm-audio` via `sceAudioSRCOutputBlocking`) +
+   coordinated power suspend/resume & HOME exit handling.
+8. **Step 08:**
+   Interactive N64 Logo (`ovl_title`) -> Title Screen -> File Select (`ovl_file_choose`)
+   flow with real 3-slot save creation, name entry, and persistent Flashrom save/load.
+9. **Step 09:**
+   Playable Clock Town vertical slice (`PlayState`, `BgCheck` collision, player movement,
+   HUD, South Clock Town scene/room transitions, and verified 3-Day Clock cycle progression).
+10. **Step 10:**
+    Crash/heap/VFPU performance hardening and standalone PSP-3000 release ZIP packaging.
+======================================================================
