@@ -59,6 +59,28 @@ impl SaveContext {
         ctx
     }
 
+    pub fn bank_rupees(&self) -> u16 {
+        u16::from_le_bytes([self.week_event_reg[96], self.week_event_reg[97]])
+    }
+
+    pub fn set_bank_rupees(&mut self, amount: u16) {
+        let bytes = amount.to_le_bytes();
+        self.week_event_reg[96] = bytes[0];
+        self.week_event_reg[97] = bytes[1];
+    }
+
+    pub fn has_deku_mask(&self) -> bool {
+        (self.week_event_reg[98] & 0x01) != 0
+    }
+
+    pub fn set_deku_mask(&mut self, owned: bool) {
+        if owned {
+            self.week_event_reg[98] |= 0x01;
+        } else {
+            self.week_event_reg[98] &= !0x01;
+        }
+    }
+
     pub fn serialize_slot(&self) -> [u8; SAVE_SLOT_SIZE] {
         let mut buf = [0u8; SAVE_SLOT_SIZE];
         buf[0..6].copy_from_slice(&self.newf);

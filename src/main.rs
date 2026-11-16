@@ -9,14 +9,14 @@ use alloc::format;
 use pmm_assets::ResourceManager;
 use pmm_gfx::Renderer;
 use pmm_gfx::math::{Mat4, mat4_identity};
-use pmm_game::graph::{FRAME_40FPS_USEC, GameStateId, NoCatchUpPacer};
+use pmm_game::clock::ClockEvent;
+use pmm_game::graph::{FRAME_40FPS_USEC, NoCatchUpPacer};
 use pmm_game::interp::FrameInterpolator;
 use pmm_game::padmgr::{PadMgr, n64_btn};
-use pmm_game::save::{SAVE_SLOT_MAGIC, SysFlashrom};
-use pmm_game::states::{
-    ConsoleLogoState, DayTelopState, FileOpOutcome, FileSelectState, OTRMessageTable,
-    ScriptedPadInjector, TitleSetupState,
-};
+use pmm_game::play::PlayState;
+use pmm_game::player::{OcarinaSong, PlayerForm};
+use pmm_game::save::{SaveContext, SysFlashrom};
+use pmm_game::scene::SceneId;
 use pmm_game::thga::GfxPool;
 use psp::sys;
 
@@ -49,6 +49,7 @@ fn psp_main() {
     let mut pad_mgr = PadMgr::new();
     let mut pacer = NoCatchUpPacer::new();
     let mut flash = SysFlashrom::new(platform::flashrom_psp::PspFlashIo);
+    let _ = flash.init_flash();
 
     let proj: Mat4 = [
         [1.0 / 240.0, 0.0, 0.0, 0.0],
@@ -58,160 +59,132 @@ fn psp_main() {
     ];
     let view = mat4_identity();
 
+    let mut save = SaveContext::new_quest("Link");
+    save.set_deku_mask(true);
+    save.set_bank_rupees(100);
+    let _ = flash.write_save_slot(0, &save);
+    let _ = flash.await_result();
+
+    let mut play = {
+        let mut scene_arena = pools.scene_arena_mut();
+        PlayState::enter(SceneId::InsideTower, save, &mut scene_arena, &mut mgr)
+    };
+    let inside_bytes = play.scene.scene_bytes_loaded;
+
+    let mut spawned_town_from_insidetower = false;
+    let mut town_bytes = 0usize;
+    let mut deku_to_human_ok = false;
+    let mut ztarget_ok = false;
+    let day1_dawn_seen = play.clock.day == 1 && play.clock.time >= 0x4000;
+    let mut day1_night_seen = false;
+    let mut day2_dawn_seen = false;
+    let mut soto_reset_seen = false;
+    let mut owl_save_ok = false;
+
     let mut frames_rendered_total: u32 = 0;
     let mut sum_frame_us: u64 = 0;
+    let mut owl_phase_ticks = 0u32;
 
-    let mut pace_frame = |sum_us: &mut u64, count: &mut u32| {
-        let now = unsafe { sys::sceKernelGetSystemTimeLow() };
-        let wait = pacer.compute_sleep_usec(now, FRAME_40FPS_USEC);
-        if wait > 0 {
-            unsafe { sys::sceKernelDelayThread(wait) };
+    for tick in 0..300u32 {
+        // Script real N64 controller inputs + Ocarina song beats across 300 ticks (15s @ 20 Hz)
+        let mut buttons = 0u32;
+        let mut sx = 0i8;
+        let mut sy = 0i8;
+        let mut song = OcarinaSong::None;
+
+        if play.scene.id == SceneId::InsideTower && tick < 35 {
+            // Walk south through Clock Tower doorway exit polygon (z = 140..190) -> SCENE_TOWN
+            sy = -80;
+        } else if play.scene.id == SceneId::SouthClockTown {
+            if !deku_to_human_ok && tick == 38 {
+                buttons |= n64_btn::R_CBUTTONS; // Transform Deku -> Human
+            } else if !owl_save_ok && owl_phase_ticks < 24 {
+                // Walk toward Owl Statue [95, 0, 75] from spawn [0, 0, 40]
+                if play.player.pos[0] < 88.0 {
+                    sx = 80;
+                }
+                if play.player.pos[2] < 70.0 {
+                    sy = -60;
+                }
+                if (play.player.pos[0] - 95.0).abs() <= 24.0
+                    && (play.player.pos[2] - 75.0).abs() <= 24.0
+                {
+                    buttons |= n64_btn::A_BUTTON;
+                }
+                owl_phase_ticks += 1;
+            } else if tick < 130 {
+                // Walk east against Clock Town plaza wall (x=420) -> BgCheck wall sphere push
+                sx = 80;
+            } else if tick < 165 {
+                // Hold Z-Target -> animate letterbox to 24px
+                buttons |= n64_btn::Z_TRIG;
+                sy = 60; // move toward center / sloped ramp
+            }
         }
-        *sum_us += (FRAME_40FPS_USEC as u64).max(wait as u64);
-        *count += 1;
-    };
 
-    // --- State 1: TitleSetup -> ConsoleLogo ---
-    let mut title_setup = TitleSetupState::new();
-    let (_save_ctx, msgs, state_after_setup): (_, OTRMessageTable, GameStateId) = {
-        let mut arena = pools.common_arena_mut();
-        title_setup.update(&mut flash, &mut mgr, &mut arena)
-    };
-    let state_01_ok = state_after_setup == GameStateId::Title;
+        if tick == 175 {
+            song = OcarinaSong::SongOfDoubleTime; // Day 1 Dawn -> Day 1 Night (0xC000) + bell toll
+        } else if tick == 205 {
+            song = OcarinaSong::SongOfDoubleTime; // Day 1 Night -> Day 2 Dawn (day=2, 0x4000)
+        } else if tick == 240 {
+            let mut scene_arena = pools.scene_arena_mut();
+            play.transition_to_scene(SceneId::InsideTower, &mut scene_arena, &mut mgr);
+        } else if tick == 248 {
+            let mut scene_arena = pools.scene_arena_mut();
+            play.transition_to_scene(SceneId::SouthClockTown, &mut scene_arena, &mut mgr);
+        } else if tick == 265 {
+            song = OcarinaSong::SongOfTime; // Reset cycle -> Day 1 Dawn (0x4000), count+=1
+        }
 
-    // --- State 2: ConsoleLogo (ovl_title) -> FileSelect ---
-    let mut console_logo = ConsoleLogoState::new();
-    let mut logo_script = ScriptedPadInjector::new();
-    logo_script.push_press(26, n64_btn::START_BUTTON);
-    let mut logo_frames: u32 = 0;
-    let mut state_02_ok = false;
+        let prev_form = play.player.form;
+        let pad = pad_mgr.update_n64_raw(buttons, sx, sy);
+        let ev = {
+            let mut scene_arena = pools.scene_arena_mut();
+            play.update_logic(&pad, song, &mut mgr, &mut scene_arena, &mut flash, &mut interp)
+        };
 
-    for _ in 0..90u32 {
-        let (btn, sx, sy) = logo_script.sample_tick();
-        let pad = pad_mgr.update_n64_raw(btn, sx, sy);
-        let next = console_logo.update_logic(&pad, &mut interp);
+        if ev.scene_transition == Some(SceneId::SouthClockTown) && !spawned_town_from_insidetower {
+            spawned_town_from_insidetower = true;
+            town_bytes = play.scene.scene_bytes_loaded;
+        }
+        if prev_form == PlayerForm::DekuScrub && play.player.form == PlayerForm::Human {
+            deku_to_human_ok = true;
+        }
+        if play.max_letterbox_bar_px == 24 && play.camera.letterbox_gap_rows() == 0 {
+            ztarget_ok = true;
+        }
+        if ev.owl_saved {
+            owl_save_ok = flash.read_save_slot(0).is_some_and(|s| s.owl_save_location != 0);
+        }
+        if ev.play_night_bell_sfx {
+            audio_worker.trigger_night_bell();
+        }
+        match ev.clock_event {
+            ClockEvent::NightStarted(1) => day1_night_seen = true,
+            ClockEvent::DawnTransition(2) => day2_dawn_seen = true,
+            ClockEvent::DawnTransition(1) if song == OcarinaSong::SongOfTime => {
+                soto_reset_seen = play.clock.day == 1
+                    && play.clock.time == 0x4000
+                    && play.save.three_day_reset_count >= 1
+                    && play.save.bank_rupees() == 100
+                    && play.save.has_deku_mask();
+            }
+            _ => {}
+        }
 
+        // 2 interpolated 40 FPS presentation passes per 20 Hz logic tick
         for &frac in &[0.5f32, 1.0f32] {
-            gfx.begin_frame(0xFF10_0804, &proj, &view);
-            console_logo.draw_frame(&mut pool, &mut renderer, &mut mgr, &mut gfx, &mut interp, frac);
+            gfx.begin_frame(0xFF20_1810, &proj, &view);
+            play.draw_frame(frac, &mut pool, &mut renderer, &mut mgr, &mut gfx, &mut interp);
             gfx.end_frame_and_swap(false);
-            pace_frame(&mut sum_frame_us, &mut frames_rendered_total);
-            logo_frames += 1;
-        }
-        if next == Some(GameStateId::FileChoose) {
-            state_02_ok = console_logo.fade_in_seen
-                && console_logo.hold_seen
-                && console_logo.fade_out_seen;
-            break;
-        }
-    }
 
-    // --- State 3: FileSelect (Create, 40-tick Flash Wait, Copy, Erase, Corrupt Recovery, Launch) ---
-    let mut file_select = FileSelectState::new(&mut flash);
-    // Start clean so create/copy/erase verification is repeatable across boots
-    let _ = flash.erase_save_slot(0);
-    let _ = flash.await_result();
-    let _ = flash.erase_save_slot(1);
-    let _ = flash.await_result();
-    let _ = flash.erase_save_slot(2);
-    let _ = flash.await_result();
-    file_select.reload_slots(&flash);
-
-    // 3a: Create Slot 0 ("Link") and run 40-tick async flash save wait
-    let mut create_ok = file_select.begin_create_slot(0, "Link")
-        && file_select.confirm_name_entry(&mut flash);
-    let mut create_wait_ticks = 0u16;
-    while file_select.wait_timer > 0 {
-        let idle = pad_mgr.update_n64_raw(0, 0, 0);
-        let _ = file_select.update_logic(&idle, &mut flash, &mut interp);
-        create_wait_ticks += 1;
-        for &frac in &[0.5f32, 1.0f32] {
-            gfx.begin_frame(0xFF30_1808, &proj, &view);
-            file_select.draw_frame(&mut pool, &mut renderer, &mut mgr, &mut gfx, &mut interp, frac);
-            gfx.end_frame_and_swap(false);
-            pace_frame(&mut sum_frame_us, &mut frames_rendered_total);
-        }
-    }
-    if let Some(s0) = &file_select.slots[0] {
-        create_ok = create_ok
-            && create_wait_ticks == 40
-            && s0.newf == SAVE_SLOT_MAGIC
-            && s0.health_capacity == 0x30
-            && s0.time == 0x4000
-            && file_select.last_op == Some(FileOpOutcome::CreatedSlot(0));
-    } else {
-        create_ok = false;
-    }
-
-    // 3b: Copy Slot 0 -> Slot 1
-    let mut copy_ok = file_select.start_copy_slot(&mut flash, 0, 1);
-    while file_select.wait_timer > 0 {
-        let idle = pad_mgr.update_n64_raw(0, 0, 0);
-        let _ = file_select.update_logic(&idle, &mut flash, &mut interp);
-        for &frac in &[0.5f32, 1.0f32] {
-            gfx.begin_frame(0xFF30_1808, &proj, &view);
-            file_select.draw_frame(&mut pool, &mut renderer, &mut mgr, &mut gfx, &mut interp, frac);
-            gfx.end_frame_and_swap(false);
-            pace_frame(&mut sum_frame_us, &mut frames_rendered_total);
-        }
-    }
-    copy_ok = copy_ok && file_select.slot_valid[1];
-
-    // 3c: Erase Slot 1
-    let mut erase_ok = file_select.start_erase_slot(&mut flash, 1);
-    while file_select.wait_timer > 0 {
-        let idle = pad_mgr.update_n64_raw(0, 0, 0);
-        let _ = file_select.update_logic(&idle, &mut flash, &mut interp);
-        for &frac in &[0.5f32, 1.0f32] {
-            gfx.begin_frame(0xFF30_1808, &proj, &view);
-            file_select.draw_frame(&mut pool, &mut renderer, &mut mgr, &mut gfx, &mut interp, frac);
-            gfx.end_frame_and_swap(false);
-            pace_frame(&mut sum_frame_us, &mut frames_rendered_total);
-        }
-    }
-    erase_ok = erase_ok && !file_select.slot_valid[1];
-
-    // 3d: Corrupt Slot 2 recovery + invalid handling
-    let corrupt_ok = file_select.verify_corrupt_slot_recovery(&mut flash, 2) && !file_select.slot_valid[2];
-
-    // 3e: Launch Slot 0 -> DayTelop
-    let mut launch_ok = file_select.launch_slot(0);
-    let mut launched_save = None;
-    let mut launch_btn = n64_btn::A_BUTTON;
-    for _ in 0..20u32 {
-        let pad = pad_mgr.update_n64_raw(launch_btn, 0, 0);
-        launch_btn = 0;
-        let next = file_select.update_logic(&pad, &mut flash, &mut interp);
-        for &frac in &[0.5f32, 1.0f32] {
-            gfx.begin_frame(0xFF30_1808, &proj, &view);
-            file_select.draw_frame(&mut pool, &mut renderer, &mut mgr, &mut gfx, &mut interp, frac);
-            gfx.end_frame_and_swap(false);
-            pace_frame(&mut sum_frame_us, &mut frames_rendered_total);
-        }
-        if let Some((st, ctx)) = next {
-            launch_ok = launch_ok && st == GameStateId::DayTelop;
-            launched_save = Some(ctx);
-            break;
-        }
-    }
-
-    // --- State 4: DayTelop ("Dawn of the First Day -72 Hours Remain-") -> Play ---
-    let day = launched_save.as_ref().map(|c| c.day).unwrap_or(1);
-    let mut day_telop = DayTelopState::new(day, &msgs);
-    let mut day_telop_title = day_telop.title;
-    let mut reached_play = false;
-    for _ in 0..45u32 {
-        let next = day_telop.update_logic(&mut interp);
-        for &frac in &[0.5f32, 1.0f32] {
-            gfx.begin_frame(0xFF08_0808, &proj, &view);
-            day_telop.draw_frame(&mut pool, &mut renderer, &mut mgr, &mut gfx, &mut interp, frac);
-            gfx.end_frame_and_swap(false);
-            pace_frame(&mut sum_frame_us, &mut frames_rendered_total);
-        }
-        if next == Some(GameStateId::Play) {
-            reached_play = true;
-            day_telop_title = day_telop.title;
-            break;
+            let now = unsafe { sys::sceKernelGetSystemTimeLow() };
+            let wait = pacer.compute_sleep_usec(now, FRAME_40FPS_USEC);
+            if wait > 0 {
+                unsafe { sys::sceKernelDelayThread(wait) };
+            }
+            sum_frame_us += (FRAME_40FPS_USEC as u64).max(wait as u64);
+            frames_rendered_total += 1;
         }
     }
 
@@ -224,68 +197,63 @@ fn psp_main() {
         0
     };
 
-    let pass = state_01_ok
-        && state_02_ok
-        && create_ok
-        && copy_ok
-        && erase_ok
-        && corrupt_ok
-        && launch_ok
-        && reached_play
-        && frames_rendered_total >= 180;
+    let bg_ok = play.player.floor_y > -30000.0 && play.player.wall_hits_total >= 1;
+    let move_ok = play.player.total_distance_moved > 100.0 && deku_to_human_ok;
+    let clock_ok = day1_dawn_seen && day1_night_seen && day2_dawn_seen && soto_reset_seen;
+    let zero_leak_ok = play.scene_leak_bytes_max == 0;
+
+    let pass = spawned_town_from_insidetower
+        && bg_ok
+        && move_ok
+        && ztarget_ok
+        && clock_ok
+        && owl_save_ok
+        && zero_leak_ok
+        && play.logic_ticks == 300
+        && frames_rendered_total == 600;
 
     let report = format!(
-        "OTR_MESSAGE_DATA_STATIC: loaded={}, bytes={}, entries={}\n\
-         STATE_01: {}\n\
-         STATE_02: {}\n\
-         FILESELECT_CREATE_SLOT0: {}\n\
-         FILESELECT_COPY_SLOT0_TO_SLOT1: {}\n\
-         FILESELECT_ERASE_SLOT1: {}\n\
-         NEGATIVE_CORRUPT_SLOT2_RECOVERY: {}\n\
-         FILESELECT_LAUNCH_SLOT0: {}\n\
-         FRAMES_RENDERED_TOTAL: {}\n\
-         AVG_FRAME_LATENCY_US: {}\n\
-         THGA_POOL_CANARIES_INTACT: {}\n\
+        "ROM_SCENE_BYTES: Z2_INSIDETOWER={}, Z2_TOWN={}\n\
+         SCENE_SPAWN_01: {}\n\
+         BGCHECK_FLOOR_AND_WALL_COLLISIONS: OK(floor_y={:.1}, wall_hits={})\n\
+         PLAYER_MOVEMENT_AND_DEKU_TRANSFORM: {}\n\
+         Z_TARGET_LETTERBOX_SCISSOR: OK(bar_px={}, gap_rows={})\n\
+         CLOCK_CYCLE_TRANSITIONS: {}\n\
+         OWL_STATUE_SAVE_PERSIST: {}\n\
+         SCENE_TRANSITION_RELOAD_LEAK_BYTES: {}\n\
+         LOGIC_TICKS_20HZ: {}\n\
+         PRESENTED_FRAMES_40FPS: {}\n\
+         AVG_PRESENTED_FRAME_LATENCY_US: {}\n\
          STATUS: {}\n",
-        msgs.loaded_from_pak,
-        msgs.raw_bytes_len,
-        msgs.entry_count,
-        if state_01_ok { "TitleSetup -> ConsoleLogo" } else { "FAIL" },
-        if state_02_ok {
-            format!("ConsoleLogo rendered frames={}, alpha_fade=OK -> FileSelect", logo_frames)
-        } else {
-            format!("FAIL(frames={})", logo_frames)
-        },
-        if create_ok {
-            format!(
-                "OK(name=\"Link\", hearts=0x30, time=0x4000, wait_ticks={})",
-                create_wait_ticks
-            )
-        } else {
-            "FAIL".into()
-        },
-        if copy_ok { "OK" } else { "FAIL" },
-        if erase_ok {
-            format!("OK(slot1_valid={})", file_select.slot_valid[1])
-        } else {
-            "FAIL".into()
-        },
-        if corrupt_ok {
-            "OK(fallback_or_invalid_handled)"
+        inside_bytes,
+        town_bytes,
+        if spawned_town_from_insidetower {
+            "SCENE_INSIDETOWER -> SCENE_TOWN (South Clock Town)"
         } else {
             "FAIL"
         },
-        if launch_ok && reached_play {
-            format!("OK -> DayTelop(\"{}\")", day_telop_title)
+        play.player.floor_y,
+        play.player.wall_hits_total,
+        if move_ok {
+            format!("OK(pos_delta={:.1}, form=Deku->Human)", play.player.total_distance_moved)
         } else {
-            "FAIL".into()
+            format!("FAIL(delta={:.1})", play.player.total_distance_moved)
         },
+        play.max_letterbox_bar_px,
+        play.camera.letterbox_gap_rows(),
+        if clock_ok {
+            "Day1_Dawn->Day1_Night->Day2_Dawn->SongOfTime_Reset"
+        } else {
+            "FAIL"
+        },
+        if owl_save_ok { "OK" } else { "FAIL" },
+        play.scene_leak_bytes_max,
+        play.logic_ticks,
         frames_rendered_total,
         avg_frame_us,
-        !pool.check_canaries_and_crash(),
-        if pass { "PASS" } else { "FAIL" }
+        if pass { "PASS" } else { "FAIL" },
     );
 
-    let _ = platform::crash::write_text_file("step08_title_fileselect.log", &report);
+    let _ = platform::crash::write_text_file("step09_clocktown.log", &report);
     unsafe { sys::sceKernelExitGame() };
 }

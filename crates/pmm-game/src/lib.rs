@@ -2,10 +2,18 @@
 
 extern crate alloc;
 
+pub mod actors;
+pub mod bgcheck;
+pub mod camera;
+pub mod clock;
 pub mod graph;
+pub mod hud;
 pub mod interp;
 pub mod padmgr;
+pub mod play;
+pub mod player;
 pub mod save;
+pub mod scene;
 pub mod states;
 pub mod thga;
 
@@ -419,5 +427,146 @@ mod tests {
         let p_b = pad_mgr.update_n64_raw(n64_btn::B_BUTTON, 0, 0);
         fs.update_logic(&p_b, &mut flash, &mut interp);
         assert_eq!(fs.config_mode, ConfigMode::MainMenu);
+    }
+
+    #[test]
+    fn step09_bgcheck_floor_raycast_horizontal_slope_and_oob() {
+        use bgcheck::{BGCHECK_Y_MIN, BgCheck, CollisionMesh};
+
+        let mut mesh = CollisionMesh::default();
+        mesh.add_floor_quad(-100.0, -100.0, 100.0, 0.0, 0.0, None);
+        // Sloped triangle rising from y=0 at z=0 to y=40 at z=-80 (CCW upward normal)
+        mesh.add_triangle([120.0, 0.0, 0.0], [200.0, 40.0, -80.0], [120.0, 40.0, -80.0], None);
+        mesh.add_triangle([120.0, 0.0, 0.0], [200.0, 0.0, 0.0], [200.0, 40.0, -80.0], None);
+
+        let (fy_flat, exit0) = BgCheck::entity_raycast_floor(&mesh, 0.0, 50.0, -50.0);
+        assert!((fy_flat - 0.0).abs() < 1e-3);
+        assert_eq!(exit0, None);
+
+        let (fy_mid, _) = BgCheck::entity_raycast_floor(&mesh, 160.0, 100.0, -40.0);
+        assert!((fy_mid - 20.0).abs() < 1e-3);
+
+        let (fy_oob, _) = BgCheck::entity_raycast_floor(&mesh, 999.0, 50.0, 999.0);
+        assert_eq!(fy_oob, BGCHECK_Y_MIN);
+    }
+
+    #[test]
+    fn step09_bgcheck_wall_sphere_collision_and_exit_trigger() {
+        use bgcheck::{BgCheck, CollisionMesh};
+
+        let mut mesh = CollisionMesh::default();
+        mesh.add_floor_quad(-50.0, -50.0, 50.0, 50.0, 0.0, None);
+        mesh.add_floor_quad(-20.0, 50.0, 20.0, 90.0, 0.0, Some(3));
+        mesh.add_wall_quad(50.0, -50.0, 50.0, 50.0, 0.0, 100.0);
+
+        let mut pos = [45.0, 0.0, 0.0];
+        let hits = BgCheck::entity_sph_vs_wall(&mesh, &mut pos, 18.0, 44.0);
+        assert!(hits >= 1);
+        assert!(pos[0] <= 32.1 || pos[0] >= 67.9);
+
+        let (_fy, exit_idx) = BgCheck::entity_raycast_floor(&mesh, 0.0, 20.0, 70.0);
+        assert_eq!(exit_idx, Some(3));
+    }
+
+    #[test]
+    fn step09_three_day_clock_progression_inverted_double_and_reset() {
+        use clock::{CLOCK_DAWN, CLOCK_NIGHT, ClockEvent, TIME_SPEED_INVERTED, TIME_SPEED_NORMAL, ThreeDayClock};
+
+        let mut clk = ThreeDayClock::new(1, CLOCK_DAWN);
+        assert_eq!(clk.r_time_speed, TIME_SPEED_NORMAL);
+        clk.set_inverted_song(true);
+        assert_eq!(clk.r_time_speed, TIME_SPEED_INVERTED);
+        clk.set_inverted_song(false);
+
+        assert_eq!(clk.song_of_double_time(), ClockEvent::NightStarted(1));
+        assert_eq!(clk.time, CLOCK_NIGHT);
+        assert_eq!(clk.song_of_double_time(), ClockEvent::DawnTransition(2));
+        assert_eq!((clk.day, clk.time), (2, CLOCK_DAWN));
+        assert_eq!(clk.song_of_double_time(), ClockEvent::NightStarted(2));
+        assert_eq!(clk.song_of_double_time(), ClockEvent::DawnTransition(3));
+        assert_eq!(clk.song_of_double_time(), ClockEvent::NightStarted(3));
+
+        // Advance past midnight of Day 3 into Final Hours (< 0x4000)
+        let ev_mid = clk.advance_units(0x4100);
+        assert_eq!(ev_mid, ClockEvent::None);
+        assert!(clk.is_final_hours());
+
+        // Double Time on Day 3 final hours must NOT skip past Final Day 6:00 AM
+        let ev_block = clk.song_of_double_time();
+        assert_eq!(ev_block, ClockEvent::None);
+        assert_eq!(clk.day, 3);
+
+        // Normal clock ticks across Day 3 6:00 AM triggers Moon Crash at day=4
+        let ev_crash = clk.advance_units(0x0200);
+        assert_eq!(ev_crash, ClockEvent::MoonCrash);
+
+        // Song of Time reset preserves banked rupees & Deku mask, resets consumables
+        let mut save = SaveContext::new_quest("Link");
+        save.set_bank_rupees(250);
+        save.set_deku_mask(true);
+        save.rupees = 99;
+        save.magic = 48;
+        clk.song_of_time_reset(&mut save);
+        assert_eq!((clk.day, clk.time), (1, CLOCK_DAWN));
+        assert_eq!(save.three_day_reset_count, 1);
+        assert_eq!(save.bank_rupees(), 250);
+        assert!(save.has_deku_mask());
+        assert_eq!(save.rupees, 0);
+        assert_eq!(save.magic, 0);
+    }
+
+    #[test]
+    fn step09_play_state_scene_reload_zero_leak_deku_ztarget_and_owl_save() {
+        use play::PlayState;
+        use player::{OcarinaSong, PlayerForm};
+        use pmm_assets::{BoundedArena, MemPakSource, ResourceManager};
+        use pmm_gfx::{MockGfxBackend, Renderer, math::compute_letterbox_scissor};
+        use scene::SceneId;
+
+        let pak = build_test_pak_with_messages();
+        let mut res = ResourceManager::open(MemPakSource::new(pak)).expect("open test pak");
+        let mut mem = alloc::vec![0u8; 64 * 1024];
+        let mut arena = BoundedArena::from_slice(&mut mem);
+        let mut flash = SysFlashrom::new(MemFlashIo::default());
+        flash.init_flash();
+
+        let save = SaveContext::new_quest("Link");
+        let mut play = PlayState::enter(SceneId::InsideTower, save, &mut arena, &mut res);
+        let mut pad_mgr = PadMgr::new();
+        let mut interp = FrameInterpolator::new();
+        let mut pool = GfxPool::new();
+        let mut renderer = Renderer::new();
+        let mut backend = MockGfxBackend::default();
+
+        // Walk forward from InsideTower doorway into SouthClockTown (exit 1 at z=140..190)
+        for _ in 0..24 {
+            let pad = pad_mgr.update_n64_raw(0, 0, -80);
+            let ev = play.update_logic(&pad, OcarinaSong::None, &mut res, &mut arena, &mut flash, &mut interp);
+            play.draw_frame(0.5, &mut pool, &mut renderer, &mut res, &mut backend, &mut interp);
+            play.draw_frame(1.0, &mut pool, &mut renderer, &mut res, &mut backend, &mut interp);
+            if ev.scene_transition == Some(SceneId::SouthClockTown) {
+                break;
+            }
+        }
+        assert_eq!(play.scene.id, SceneId::SouthClockTown);
+
+        // Toggle Deku -> Human & Z-target letterbox to 24px
+        let pad_toggle = pad_mgr.update_n64_raw(n64_btn::R_CBUTTONS | n64_btn::Z_TRIG, 0, 0);
+        play.update_logic(&pad_toggle, OcarinaSong::None, &mut res, &mut arena, &mut flash, &mut interp);
+        assert_eq!(play.player.form, PlayerForm::Human);
+        for _ in 0..5 {
+            let pad_z = pad_mgr.update_n64_raw(n64_btn::Z_TRIG, 0, 0);
+            play.update_logic(&pad_z, OcarinaSong::None, &mut res, &mut arena, &mut flash, &mut interp);
+        }
+        assert_eq!(play.camera.letterbox_bar_px, 24);
+        assert_eq!(play.camera.letterbox_gap_rows(), 0);
+        let (mid, top, bot) = compute_letterbox_scissor(480, 272, 24);
+        assert_eq!(top.y1, mid.y0);
+        assert_eq!(mid.y1, bot.y0);
+
+        // Transition out and back to SouthClockTown -> zero scene arena leak
+        play.transition_to_scene(SceneId::InsideTower, &mut arena, &mut res);
+        play.transition_to_scene(SceneId::SouthClockTown, &mut arena, &mut res);
+        assert_eq!(play.scene_leak_bytes_max, 0);
     }
 }

@@ -91,6 +91,7 @@ dependencies = [
 name = "pmm-game"
 version = "0.1.0"
 dependencies = [
+ "libm",
  "pmm-assets",
  "pmm-gfx",
  "pmm-schema",

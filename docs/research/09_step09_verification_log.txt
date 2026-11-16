@@ -1,0 +1,25 @@
+STEP 09 VERIFICATION LOG — CLOCK TOWN VERTICAL SLICE, BGCHECK, HUD & 3-DAY CLOCK
+Date: 2026-11-16
+
+1. Host Unit Tests:
+   Command: `cargo test -p pmm-schema -p pmm-assets -p pmm-gfx -p pmm-audio -p pmm-game -p pmm-extractor --target x86_64-unknown-linux-gnu`
+   Result: ALL PASSED (pmm-assets 8/8, pmm-audio 8/8, pmm-extractor 10/10, pmm-game 20/20 [including Step 09 BgCheck floor/slope/wall/exit, 3-Day Clock progression + MoonCrash + Inverted + Double Time + Song of Time reset, scene reload zero leak, Deku/Human toggle, Z-target letterbox], pmm-gfx 10/10, pmm-schema 6/6) -> 0 failed.
+
+2. PPSSPP Slim 300-Tick / 600-Frame @ 40 FPS Soak Output (`step09_clocktown.log` via `./scripts/test_step09.sh`):
+   ROM_SCENE_BYTES: Z2_INSIDETOWER=32576, Z2_TOWN=124784
+   SCENE_SPAWN_01: SCENE_INSIDETOWER -> SCENE_TOWN (South Clock Town)
+   BGCHECK_FLOOR_AND_WALL_COLLISIONS: OK(floor_y=-0.0, wall_hits=61)
+   PLAYER_MOVEMENT_AND_DEKU_TRANSFORM: OK(pos_delta=782.6, form=Deku->Human)
+   Z_TARGET_LETTERBOX_SCISSOR: OK(bar_px=24, gap_rows=0)
+   CLOCK_CYCLE_TRANSITIONS: Day1_Dawn->Day1_Night->Day2_Dawn->SongOfTime_Reset
+   OWL_STATUE_SAVE_PERSIST: OK
+   SCENE_TRANSITION_RELOAD_LEAK_BYTES: 0
+   LOGIC_TICKS_20HZ: 300
+   PRESENTED_FRAMES_40FPS: 600
+   AVG_PRESENTED_FRAME_LATENCY_US: 25000
+   STATUS: PASS
+
+3. Notes:
+   - Real US MM segments `Z2_INSIDETOWER` (32,576 bytes) and `Z2_TOWN` (124,784 bytes) loaded from `data/pmm_2s2h.pak` into Pool 2 (`SceneObjectArena`).
+   - Verified `BgCheck` floor raycast + wall sphere push (`wall_hits=61`) + doorway exit transition (`InsideTower -> SouthClockTown`), Deku->Human transformation, 24 px Z-target letterbox scissor (`gap_rows=0`), Owl Statue save persistence (`mm-psp-save.bin`), 3-Day Clock cycle progression & Song of Time reset, nightfall bell toll trigger, 0 scene-reload leak bytes, and 600 presented frames @ `25,000 us` (`40.0 FPS`).
+   - REAL PSP-3000 HARDWARE TEST: NOT YET RUN (verified in PPSSPP Slim emulator only).

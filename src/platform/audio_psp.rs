@@ -51,6 +51,10 @@ impl AudioWorker {
         Ok(Self { thread_id: thid })
     }
 
+    pub fn trigger_night_bell(&self) {
+        AUDIO_SEQ_REQUEST.store(2, Ordering::Release);
+    }
+
     pub fn stop_and_join(&mut self) {
         AUDIO_STOP.store(true, Ordering::SeqCst);
         unsafe {
@@ -82,9 +86,15 @@ unsafe extern "C" fn audio_thread_entry(_args: usize, _argp: *mut c_void) -> i32
     };
 
     while !AUDIO_STOP.load(Ordering::Acquire) {
-        if AUDIO_SEQ_REQUEST.swap(0, Ordering::AcqRel) == 1 {
-            mixer.start_sequence(SeqId::ClockTownDay1);
-            mixer.trigger_sfx(SfxId::ClockBell);
+        match AUDIO_SEQ_REQUEST.swap(0, Ordering::AcqRel) {
+            1 => {
+                mixer.start_sequence(SeqId::ClockTownDay1);
+                mixer.trigger_sfx(SfxId::ClockBell);
+            }
+            2 => {
+                mixer.trigger_sfx(SfxId::ClockBell);
+            }
+            _ => {}
         }
         if AUDIO_PAUSED.load(Ordering::Acquire) {
             unsafe { sys::sceKernelDelayThread(4_000) };
