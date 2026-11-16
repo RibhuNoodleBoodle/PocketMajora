@@ -1,6 +1,6 @@
 ======================================================================
 GEMINI FLASH IMPLEMENTATION PROMPT -- STEP 06
-MILESTONE: 06 -- `pmm-game` Core: 20 FPS `Graph` Loop, `PadMgr` Input, & 128 KiB `SysFlashrom` Save
+MILESTONE: 06 -- `pmm-game` Core: 40 FPS (25 ms) Interpolated Render + 20 Hz `Graph` Loop, `PadMgr`, & `SysFlashrom`
 Architect: Gemini Argon | Implementer: Gemini Flash
 Repository Root: /mnt/6421-8598/building/PocketMajora
 ======================================================================
@@ -12,17 +12,44 @@ Prerequisite Gate: Step 05 MUST be `PASS`.
 Your objective in Step 06:
 1. Create `crates/pmm-game` (`#![no_std]` + `alloc`), implementing the core
    2S2H-derived game runtime systems (`majora_code/mm/src/code/graph.c`,
-   `padmgr.c`, `sys_flashrom.c`, `z_sram.c`):
-   - `Graph` Coroutine Frame Loop & `GfxPool` Double-Buffering:
+   `2s2h/Enhancements/FrameInterpolation/`, `padmgr.c`, `sys_flashrom.c`, `z_sram.c`):
+   - **40 FPS (`25,000 us` Latency) Frame Interpolation Engine + 20 Hz `Graph` Loop:**
+     * Why: The owner's target is **40 FPS (`25.0 ms` frame latency)** running on top
+       of authentic **20 Hz (`50.0 ms`) N64 game logic** so the 3-Day Clock, actor
+       schedules, and physics remain 100% deterministic while visual presentation and
+       camera/actor motion run at double rate (40 FPS).
+     * Implements `FrameInterpolator` (`crates/pmm-game/src/interp.rs`):
+       - Double-buffered `FrameHistory` (`2,048` matrix records, `1,024` hash buckets)
+         recording world-space camera/actor/limb `MtxF` (`[[f32; 4]; 4]`) keyed by
+         `(identity_id: u64, call_site: u32)`.
+       - `begin_tick(state_id, scene_id, room_id, camera_epoch)`: swaps history buffers.
+       - `end_tick()`: pairs current tick matrix groups with previous tick matrix groups
+         when `(state_id, scene_id, room_id, camera_epoch)` match and group counts equal.
+       - `resolve(address, fraction: f32) -> [[f32; 4]; 4]`: when `fraction < 1.0`
+         (`0.5` on Pass 0), blends `prev + (curr - prev) * 0.5` unless `can_blend(prev, curr)`
+         detects a teleport (`translation_dist_sq > 1_000_000.0`), a `>= 90 deg` flip
+         (any 3x3 basis row dot product `<= 0.0`), or a `> 4x` scale jump, in which
+         case it snaps cleanly to `curr`.
      * Implements `TwoHeadGfxArena` (`THGA`) for `POLY_OPA`, `POLY_XLU`, `OVERLAY`,
        `WORK`, and `DEBUG` display list buffers with head/tail magic canary checks
        (`GFXPOOL_HEAD_MAGIC = 0x1234`, `GFXPOOL_TAIL_MAGIC = 0x5678`).
      * Implements `GameStateTrait` (`init`, `update`, `destroy`, `framerate_divisor`)
        and `GameStateOverlayTable` state transitions (`TitleSetup` -> `Title` ->
        `FileChoose` -> `Opening` -> `DayTelop` -> `Play`).
-     * Implements deterministic RTC frame pacing (`sceRtcGetCurrentTick`):
-       - When `framerate_divisor == 3` (20.0 FPS gameplay), each logic tick spans
-         `50,000 us` (3 VBlanks on 60 Hz LCD).
+     * Implements the **40 FPS (`25,000 us` per pass) No-Catch-Up Pacer**:
+       - Uses `sceKernelGetSystemTimeLow()` (`1 MHz` 32-bit microsecond timer with
+         wrap-safe signed subtraction `(next_usec.wrapping_sub(now_usec)) as i32`) and
+         `sceKernelDelayThread`. If a frame ever runs late (`wait_usec < 0`), rebase
+         `next_usec = now_usec` immediately (NO catch-up spiral!).
+       - For each 20 Hz logic tick (`50,000 us` total):
+         1) Poll `PadMgr` right before simulation to minimize input-to-photon latency.
+         2) Run `GameState::update()` once (`20 Hz`) and record transforms in `FrameInterpolator`.
+         3) **Pass 0 (`fraction = 0.5`, paced at `+25,000 us`):** Replay the frame's
+            `GfxMasterList` through `pmm-gfx` with `fraction = 0.5` interpolated matrices
+            and present (`sceGuSwapBuffers`).
+         4) **Pass 1 (`fraction = 1.0`, paced at `+50,000 us`):** Replay the frame's
+            `GfxMasterList` through `pmm-gfx` with `fraction = 1.0` authoritative matrices
+            and present (`sceGuSwapBuffers`).
        - Converts PSP RTC microseconds to N64 `OS_CPU_COUNTER` ticks (`46.875 MHz`:
          `ticks_us * 46875 / 1000`) for authentic MM deadlines.
    - `PadMgr` Controller Mapping (`crates/pmm-game/src/padmgr.rs`):
@@ -80,7 +107,10 @@ Deploy `EBOOT.PBP` to PPSSPP (`PSPModel = 1`), execute, and inspect both
 
 5. MEASURABLE ACCEPTANCE CRITERIA & NEGATIVE TESTS
 ----------------------------------------------------------------------
-1. Host unit tests in `crates/pmm-game` pass (`>= 10` tests):
+1. Host unit tests in `crates/pmm-game` pass (`>= 12` tests):
+   - `FrameInterpolator` midpoint (`0.5`) blend accuracy test + negative tests verifying
+     that teleports (`delta > 1000.0`), `> 90 deg` basis flips (`dot <= 0.0`), and scene
+     changes snap cleanly to `curr` without blending.
    - `THGA` arena allocation + negative test when `POLY_OPA` head meets tail
      (`is_crash() == true`).
    - `PadMgr` button press/release edge detection (`press = cur & !prev`,
@@ -89,9 +119,12 @@ Deploy `EBOOT.PBP` to PPSSPP (`PSPModel = 1`), execute, and inspect both
      and `SysFlashrom` async state machine (`write_async` -> `is_busy() == 1` ->
      `await_result() == 0` -> subsequent `is_busy() == 0`; out-of-range page write
      returns `Err` / `-1`).
-2. PPSSPP `step06_game.log` records:
-   - `GRAPH_LOGIC_TICKS: 120` (at `framerate_divisor = 3` / 20 FPS)
-   - `ELAPSED_RTC_MS: <ms>` (verified ~6,000 ms +/- tolerance for 120 ticks at 20 FPS)
+2. PPSSPP `step06_game.log` records across 120 logic ticks (6.0 seconds):
+   - `GRAPH_LOGIC_TICKS_20HZ: 120`
+   - `PRESENTED_FRAMES_40FPS: 240` (`2` render passes per 20 Hz tick: `0.5` and `1.0`)
+   - `AVG_FRAME_LATENCY_US: <us>` (target `~25000` us = `25.0 ms` per presented frame)
+   - `INTERPOLATED_MATRIX_BLENDS: <count>` (must be `> 0`)
+   - `TELEPORT_SNAP_GUARD_TEST: OK`
    - `GAMESTATE_TRANSITIONS: TitleSetup->Title->FileChoose`
    - `FLASHROM_WRITE_ASYNC_BUSY_BEFORE_COLLECT: 1`
    - `FLASHROM_AWAIT_RESULT: 0`

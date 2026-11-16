@@ -47,22 +47,36 @@ Why **CONDITIONAL GO** (and neither blind `GO` nor `NO-GO`):
      * Playable Clock Town Vertical Slice + 3-Day Clock Cycle Regression (Step 09)
      * Crash/Heap/Performance Hardening & Physical PSP-3000 Packaging (Step 10)
 
-2. QUANTITATIVE PERFORMANCE & RESOURCE TARGETS (TARGETS UNTIL MEASURED)
+2. QUANTITATIVE PERFORMANCE & RESOURCE TARGETS (40 FPS / 25.0 MS LATENCY TARGET)
 ----------------------------------------------------------------------
-Per Master Prompt Section D (Stage 3):
-- Simulation Tick Rate Target:
-  * **20.0 FPS** (`50.0 ms` per logic tick = 3 VBlanks on 60 Hz LCD) during 3D `PlayState`
-    gameplay, matching original N64 Majora's Mask (`framerateDivisor = 3`) so the 3-Day
-    Clock (`gSaveContext.save.time`), actor schedules (`z_en_hy`), and cutscene timings
-    remain 100% authentic.
-  * **30.0 / 60.0 FPS** (`framerateDivisor = 2` or `1`) in lightweight 2D/menu states where
-    original MM sets `framerateDivisor < 3`.
-- CPU Budget per 50.0 ms (20 FPS) Tick on 333 MHz Allegrex (`~16.65M` cycles/tick):
-  * Game State + Collision + Actor Simulation: `<= 15.0 ms`
-  * F3DEX2 Display List Interpretation + VFPU Transform/Clip + `sceGu` Emission: `<= 15.0 ms`
-  * 32 kHz Audio Synthesis (`1,600` stereo samples per 50 ms tick): `<= 6.0 ms`
-  * Memory Stick Streaming / Sync Overhead: `<= 4.0 ms`
-  * Total Target Frame Time: `<= 40.0 ms` (leaving `>= 10.0 ms` margin before the 3rd VBlank).
+Per Owner Requirement ("My target is 40 FPS rather than 21 in the original... Only target 25 ms latency time"):
+- Presentation Frame Rate & Latency Target:
+  * **40.0 FPS Rendered Presentation (`<= 25.0 ms` / `25,000 us` per presented frame)**
+    running on top of **20.0 Hz N64 Game Logic Simulation (`50,000 us` logic tick = 2 render
+    passes per logic tick: Pass 0 interpolated at `fraction = 0.5` and Pass 1 authoritative
+    at `fraction = 1.0`)**.
+  * Why 20 Hz Logic + 40 FPS Interpolated Render is Optimal:
+    - Keeps the 3-Day Clock (`gSaveContext.save.time`), actor schedules (`z_en_hy`), and
+      cutscene timers 100% authentic to N64 Majora's Mask.
+    - Cuts visual frame interval and frame-to-frame latency in half (`50.0 ms -> 25.0 ms`)
+      without the `16.67 ms` 60 FPS overload that stalls PSP's 333 MHz CPU/GE in Clock Town.
+- CPU & GE Budget per 25.0 ms (40 FPS) Frame on 333 MHz Allegrex (`scePowerSetClockFrequency(333, 333, 166)`):
+  * Pass 0 (`0..25.0 ms` window):
+    - 20 Hz Game State + Collision + Actor Simulation: `<= 10.0 ms`
+    - 32 kHz Audio Command Generation (mixed asynchronously on audio thread): `<= 2.0 ms`
+    - Pass 0 (`fraction = 0.5`) VFPU Matrix Lerp + `sceGu` Submission (`sceGuCallList` for
+      cached static room geometry + dynamic actor draw): `<= 10.0 ms`
+    - Total Pass 0 Latency: `<= 22.0 ms` (strictly `< 25.0 ms` target!).
+  * Pass 1 (`25.0..50.0 ms` window):
+    - No simulation re-run needed! Only replays the recorded display list with authoritative
+      `fraction = 1.0` matrices + static room `sceGuCallList`: `<= 9.0 ms` (well inside the
+      second `25.0 ms` window).
+- Mandatory Optimization Pipeline Embedded Across Steps 02-10:
+  1. **Step 02:** Lock PSP clocks to `333 MHz CPU / 333 MHz PLL / 166 MHz Bus` at startup (`+50%` speed).
+  2. **Step 03:** Pre-swizzle textures into PSP 16x8 byte tiles (`GU_TRUE`) inside `pmm-extractor` (`2x-4x` GE texture fillrate).
+  3. **Step 05:** Compile static room `SetMesh` display lists into cached native `sceGuCallList` buffers in Pool 3 (`RendererCache`), suppress redundant texture/material state binds, and use inline VFPU (`vfpu_asm!`) for 4x4 matrix multiply + midpoint matrix lerp.
+  4. **Step 06:** Implement the 2-frame `FrameInterpolator` (`2048` matrix history slots with teleport/cut guards) and the `25,000 us` (`40 FPS`) no-catch-up microsecond pacer in `crates/pmm-game`.
+  5. **Step 09 & Step 10:** Benchmark Clock Town at 40 FPS (`2` render passes per 20 Hz tick) and verify `AVG_FRAME_LATENCY_US <= 25000`.
 - Memory Ceiling Targets:
   * Peak Partition 2 User Memory Allocated: `<= 40.0 MiB` (leaving `>= 10.0 MiB` free in
     `sceKernelTotalFreeMemSize()` on PSP-3000).

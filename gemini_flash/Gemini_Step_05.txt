@@ -18,10 +18,22 @@ Your objective in Step 05:
      * 16-bit Z-buffer (`278,528` B at `0x040CC000`)
      * GPU motion-blur history buffer (`278,528` B at `0x04110000`)
      * `688 KiB` hot texture/TLUT scratch region in VRAM (`0x04154000..0x041FFFFF`)
-   - GE Command Ring & Native Vertex Cache in Pool 3 (`RendererCache` 6 MiB):
+   - GE Command Ring, Native Vertex Cache, & Compiled `sceGuCallList` Static Meshes in Pool 3 (`RendererCache` 6 MiB):
      * Double-buffered `512 KiB` 64-byte aligned GE display lists (`sceGuStart(GuContextType::Direct, ...)`).
      * Native 36-byte PSP vertex format (`f32 u, v`, `u32 color_abgr`, `i8 nx, ny, nz, pad`, `f32 x, y, z` or `GU_TEXTURE_32BITF | GU_COLOR_8888 | GU_VERTEX_32BITF`).
-     * Immutable mesh cache for static room display lists + per-frame dynamic vertex ring.
+     * **40 FPS / 25 ms Optimization #1 (Compiled Static Room Meshes):** Static room display
+       lists are compiled once on first use into immutable native PSP vertex buffers +
+       cached GE sub-lists (`sceGuStart(GuContextType::Call, ...)` -> `sceGuCallList`), so
+       Pass 0 (`fraction = 0.5`) and Pass 1 (`fraction = 1.0`) replay static room geometry
+       with zero CPU F3DEX2 re-decoding!
+     * **40 FPS / 25 ms Optimization #2 (VFPU Matrix Multiply & Midpoint Lerp):** Implement
+       `vfpu_asm!` (on `target_arch = "mips"`, with scalar fallback on `x86_64`) for 4x4
+       matrix multiplication (`vmmul.q`) and interpolated transform blending
+       `lerp_matrix(prev, curr, fraction)` (`lv.q`, `vsub.q`, `vscl.q`, `vadd.q`).
+     * **40 FPS / 25 ms Optimization #3 (Swizzled Textures & State Deduplication):** Bind
+       pre-swizzled textures (`sceGuTexMode(psm, 0, 0, 1)`) and track `ActiveGpuState`
+       (bound texture address, CLUT, combiner mode, blend/depth flags) to suppress redundant
+       `sceGuTexImage` / `sceGuBlendFunc` emissions.
    - F3DEX2 Opcode Interpreter (`process_display_list`):
      * Matrix stack (`G_MTX`, `G_POPMTX`): converts N64 16.16 fixed-point `Mtx` (64 B)
        to `ScePspFMatrix4` (`f32` 4x4) and multiplies MVP matrices (with software near-plane
@@ -88,10 +100,13 @@ Deploy `EBOOT.PBP` + `data/pmm_2s2h.pak` to PPSSPP and run with `slim_test.ini`.
 2. PPSSPP `step05_gfx.log` records across 180 rendered frames:
    - `VRAM_LAYOUT_TOTAL_BYTES: 2097152`
    - `FRAMES_RENDERED: 180`
+   - `AVG_RENDER_PASS_CPU_US: <us>` (must be `<= 12000` us to fit comfortably inside the 25,000 us 40 FPS budget)
    - `TOTAL_GBI_COMMANDS_DECODED: <count>` (must be `> 1000`)
    - `TOTAL_TRIANGLES_SUBMITTED: <count>` (must be `> 500`)
    - `TEXTURES_UPLOADED_AND_CACHED: <count>` (must be `>= 2`)
-   - `STATIC_MESH_CACHE_HITS: <count>` (must be `>= 170`)
+   - `STATIC_MESH_CALLLIST_HITS: <count>` (must be `>= 170`)
+   - `REDUNDANT_STATE_BINDS_SUPPRESSED: <count>` (must be `> 0`)
+   - `VFPU_MATRIX_LERP_EQUIVALENCE: OK`
    - `MOTION_BLUR_GPU_COPYIMAGE_PASSES: <count>` (must be `> 0`)
    - `NEGATIVE_DL_DEPTH_OVERFLOW_GUARD: EXPECTED_ERR_CAUGHT`
    - `STATUS: PASS`

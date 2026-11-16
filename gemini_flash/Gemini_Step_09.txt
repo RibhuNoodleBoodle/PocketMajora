@@ -103,7 +103,7 @@ Deploy `EBOOT.PBP` to PPSSPP (`PSPModel = 1`), run, and inspect `step09_clocktow
        without skipping past Final Day 6:00 AM.
      * Song of Time resets `day = 1`, `time = 0x4000`, increments `three_day_reset_count`,
        preserves banked rupees and masks, and resets field consumables.
-2. PPSSPP `step09_clocktown.log` records across 300 gameplay ticks:
+2. PPSSPP `step09_clocktown.log` records across 300 gameplay logic ticks (600 presented frames at 40 FPS):
    - `SCENE_SPAWN_01: SCENE_INSIDETOWER -> SCENE_TOWN (South Clock Town)`
    - `BGCHECK_FLOOR_AND_WALL_COLLISIONS: OK(floor_y=..., wall_hits=...)`
    - `PLAYER_MOVEMENT_AND_DEKU_TRANSFORM: OK(pos_delta=..., form=Deku->Human)`
@@ -111,7 +111,9 @@ Deploy `EBOOT.PBP` to PPSSPP (`PSPModel = 1`), run, and inspect `step09_clocktow
    - `CLOCK_CYCLE_TRANSITIONS: Day1_Dawn->Day1_Night->Day2_Dawn->SongOfTime_Reset`
    - `OWL_STATUE_SAVE_PERSIST: OK`
    - `SCENE_TRANSITION_RELOAD_LEAK_BYTES: 0`
-   - `FRAMES_RENDERED: 300`
+   - `LOGIC_TICKS_20HZ: 300`
+   - `PRESENTED_FRAMES_40FPS: 600` (`fraction = 0.5` and `1.0` per logic tick)
+   - `AVG_PRESENTED_FRAME_LATENCY_US: <us>` (target `<= 25000` us / `25.0 ms`)
    - `STATUS: PASS`
 3. Save full host + PPSSPP logs in `docs/research/09_step09_verification_log.txt`.
 

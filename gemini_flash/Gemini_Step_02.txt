@@ -36,7 +36,12 @@ Your objective in Step 02:
        `G_SETTILESIZE = 0xF2`, `G_SETCOMBINE = 0xFC`, `G_SETPRIMCOLOR = 0xFA`,
        `G_SETENVCOLOR = 0xFB`, `G_RDPPIPESYNC = 0xE7`, `G_SEGMENT = 0xDB`) and
        16-byte N64 `Vtx` / 64-byte `Mtx` little-endian representations.
-2. Implement `src/platform/memory.rs` on the PSP target:
+2. Implement `src/platform/memory.rs` and `src/platform/clock.rs` on the PSP target:
+   - Lock PSP-3000 Hardware Clocks to Maximum (`333 MHz CPU / 333 MHz PLL / 166 MHz Bus`)
+     via `unsafe { psp::sys::scePowerSetClockFrequency(333, 333, 166) }` at startup
+     (essential for achieving the owner's **40 FPS / 25.0 ms latency target**, giving +50%
+     CPU and memory bus bandwidth over the default 222/111 MHz clock). Query back
+     `scePowerGetCpuClockFrequency()` and `scePowerGetBusClockFrequency()` to verify.
    - Deterministic Partition 2 (`SceSysMemPartitionId::SceKernelPrimaryUserPartition`)
      block manager that allocates the 4 dedicated architectural pools at boot:
      * Pool 1 (`CommonAssets`): 6 MiB (`6 * 1024 * 1024`)
@@ -96,6 +101,7 @@ and inspect `/home/ribhu/snap/ppsspp-emulator/common/.config/ppsspp/PSP/GAME/Poc
      bad magic or unaligned (`offset % 16 != 0`) payload offsets
    - `GfxWord` opcode extraction and `Vtx`/`Mtx` sizes (`16` and `64` bytes)).
 2. PPSSPP `step02_probe.log` records:
+   - `CPU_BUS_CLOCK_MHZ: 333/166`
    - `POOL_COMMON_6MIB: OK(addr=0x..., align_64=true)`
    - `POOL_SCENE_8MIB: OK(addr=0x..., align_64=true)`
    - `POOL_RENDERER_6MIB: OK(addr=0x..., align_64=true)`

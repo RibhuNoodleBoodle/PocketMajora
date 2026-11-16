@@ -63,6 +63,8 @@ Note on Step 01 -> Step 02+ Evolution:
 
 [PSP-3000 RUNTIME (`EBOOT.PBP` with `MEMSIZE=1`)]
   1. BOOT & KERNEL INIT (`src/main.rs`, `src/platform/`)
+     ├─ Lock PSP-3000 Clocks to 333 MHz CPU / 333 MHz PLL / 166 MHz Bus via
+     │  `scePowerSetClockFrequency(333, 333, 166)` (+50% over default 222/111 MHz).
      ├─ Register HOME Exit Callback & Power Suspend/Resume Callback (`sceKernelRegisterExitCallback`,
      │  `sceKernelRegisterPowerCallback`).
      ├─ Initialize crash/fault logger (`ms0:/PSP/GAME/PocketMajora/crash.log`).
@@ -73,28 +75,35 @@ Note on Step 01 -> Step 02+ Evolution:
      ├─ `pmm-assets`: Open `data/pmm_2s2h.pak`, load 64-byte header + compact index table into RAM,
      │                pin permanent assets (`gameplay_keep`, `icon_item_static`, `message_data_static`).
      ├─ `pmm-gfx`:    Initialize `sceGuInit()`, allocate 2 MiB VRAM buffers, allocate permanent
-     │                2x 262 KiB GE display list command rings (16-byte aligned uncached user RAM).
+     │                2x 512 KiB GE display list command rings (64-byte aligned uncached user RAM).
      ├─ `pmm-audio`:  Load permanent Audio SoundFonts/Seq tables, spawn high-priority Allegrex audio
-     │                thread feeding `sceAudioOutputPannedBlocking` at 32 kHz.
+     │                thread feeding `sceAudioSRCOutputBlocking` at 32 kHz.
      └─ `pmm-game`:   Initialize `SaveContext` + 128 KiB `SysFlashrom` (`mm-psp-save.bin`),
-                      initialize `Graph` coroutine state machine starting at `TitleSetup` / `Title`.
+                      initialize `FrameInterpolator` (2-frame transform history) & `Graph` state machine.
 
-  3. DETERMINISTIC 20 FPS GAME LOOP (`pmm-game::graph::run_frame`)
+  3. 40 FPS INTERPOLATED PRESENTATION + 20 HZ DETERMINISTIC SIMULATION LOOP (`pmm-game::graph::run_frame`)
      ┌────────────────────────────────────────────────────────────────────────────┐
-     │ Per N64 Logic Tick (Target: 20.0 FPS = 50,000 us / 3 VBlanks on 60 Hz LCD) │
+     │ Per N64 Logic Tick (20.0 Hz = 50,000 us -> Emits TWO 40 FPS Render Passes) │
      │   a) `PadMgr::poll()` -> `sceCtrlReadBufferPositive`                       │
      │      Map PSP Analog stick + buttons -> N64 `Input` (`OSContPad`).          │
-     │   b) `Graph::set_next_gfx_pool()`                                          │
+     │   b) `Graph::set_next_gfx_pool()` + `FrameInterpolator::begin_tick()`      │
      │      Reset `POLY_OPA`, `POLY_XLU`, `OVERLAY`, `WORK` GBI arenas.           │
      │   c) `GameState::update()` (`Title`, `FileChoose`, `Opening`, `PlayState`) │
-     │      - Advance 3-day clock (`CURRENT_TIME += TIME_SPEED`), check day/night │
+     │      - Advance 3-day clock (`CURRENT_TIME += TIME_SPEED`) at exact 20 Hz   │
      │      - Step camera, player, collision (`BgCheck`), actors, HUD (`z_param`) │
+     │      - Record per-actor/camera/limb matrices into `FrameInterpolator`      │
      │      - Emit F3DEX2 GBI commands referencing `__OTR__` resource handles     │
-     │   d) `Audio::update()`                                                     │
-     │      - Step sequence script & SFX queues, publish ABI cmd list to mixer    │
-     │   e) `pmm-gfx::process_gfx_commands(master_dl)`                            │
-     │      - Interpret F3DEX2 GBI -> transform/clip via VFPU -> emit `sceGu*`    │
-     │      - Submit to PSP GE (`sceGuFinish`, `sceGuSync`), pace VBlank, swap    │
+     │   d) `FrameInterpolator::end_tick()` + `Audio::update()`                   │
+     │      - Match current vs previous tick matrix groups `(identity, site)`     │
+     │   e) PASS 0 (Midpoint Interpolated Frame @ `fraction = 0.5`, +25,000 us):  │
+     │      - Pace to `+25,000 us` deadline (`sceKernelGetSystemTimeLow`, no      │
+     │        catch-up spiral)                                                    │
+     │      - `pmm-gfx::process_gfx_commands(master_dl, fraction = 0.5)`:         │
+     │        VFPU-lerp matrices `M(0.5) = lerp(M_prev, M_curr, 0.5)`, call       │
+     │        pre-compiled `sceGuCallList` for static room meshes, swap buffers.  │
+     │   f) PASS 1 (Authoritative Frame @ `fraction = 1.0`, +50,000 us):          │
+     │      - Pace to `+50,000 us` deadline                                       │
+     │      - `pmm-gfx::process_gfx_commands(master_dl, fraction = 1.0)`, swap.   │
      └────────────────────────────────────────────────────────────────────────────┘
 ```
 
@@ -223,17 +232,40 @@ C) F3DEX2 -> PSP `sceGu` Renderer (`crates/pmm-gfx`)
        unlit 32-pixel vertical strips and captured prior to HUD rendering via `sceGuCopyImage`,
        requiring zero CPU framebuffer readback.
 
-D) 20 FPS Game Simulation, Clocks/Time Cycle & VBlank Pacing (`crates/pmm-game`)
-   - Majora's Mask native gameplay runs at 20 FPS (`framerateDivisor = 3` on 60 Hz NTSC;
-     file select / pause transition uses `framerateDivisor = 2` or `1`).
-   - Three-Day Clock & Determinism:
-     * `gSaveContext.save.time` (`u16`, where `0x10000` = 24 in-game hours, `0x4000` = 6:00 AM
-       Dawn of the First Day) advances by `R_TIME_SPEED` per logic frame.
-     * All actor timers, cutscenes, schedule scripts (`z_en_hy`), and song of double/inverted
-       time modifiers depend on exact per-tick integer increments at 20 FPS.
-     * Therefore, game simulation MUST tick at the exact N64 `framerateDivisor` rate.
-     * Frame pacing uses `sceRtcGetCurrentTick` (1 MHz microsecond resolution) + `sceDisplayWaitVblankStart`
-       so each 20 FPS game tick spans 3 VBlanks (50.0 ms) without busy-waiting.
+D) 40 FPS Frame-Interpolated Presentation + 20 Hz Game Simulation (`crates/pmm-game`, `crates/pmm-gfx`)
+   - Owner Target: **40.0 FPS** (`25,000 us` per presented frame = `2x` the original 20 Hz N64 logic rate).
+   - Why 20 Hz Simulation + 40 FPS Matrix Interpolation (`2 passes/tick`) is Mandatory:
+     * Majora's Mask actor schedules (`z_en_hy`), physics impulses, animation frame counters,
+       cutscene timers, and the 3-Day Clock (`gSaveContext.save.time += R_TIME_SPEED`) are
+       hardcoded for 20 Hz (`50,000 us`) integer ticks. Doubling logic tick rate would double
+       game speed or break integer velocities/timers.
+     * Instead, adapting 2S2H's `FrameInterpolation` (`majora_code/mm/2s2h/Enhancements/FrameInterpolation/`)
+       and `psp_ref`'s transform-history design (`oot_psp_frame_interpolation.c`, `mm_psp_scheduler.c`),
+       each 20 Hz logic tick generates ONE immutable `GfxMasterList` and records world-space
+       model/view/limb `MtxF` transforms keyed by `(entity_identity, call_site)` into a
+       double-buffered `FrameHistory` table (`2048` matrix slots, ~300 KiB static storage).
+     * The scheduler then renders **2 passes per 20 Hz tick** (`25,000 us` deadline each):
+       - **Pass 0 (`fraction = 0.5`, `+25,000 us`):** Replays the display list while blending
+         each matched matrix `M(0.5) = M_prev + (M_curr - M_prev) * 0.5` via VFPU (`lv.q`,
+         `vsub.q`, `vscl.q`, `vadd.q`).
+       - **Pass 1 (`fraction = 1.0`, `+50,000 us`):** Replays the display list with the
+         authoritative `M_curr` matrices.
+     * **Teleport / Cut / Singular-Matrix Guard:** History resets immediately on game-state,
+       scene, room, or camera-cut transitions. Individual matrix pairs skip interpolation
+       (snapping to `M_curr`) if translation delta squared `> 1000.0^2`, any basis row dot
+       product `<= 0.0` (>90 deg flip), or scale ratio changes by `> 4x`.
+     * **Five Hardware Optimizations Required from Day 1 to Sustain 40 FPS (`25 ms/frame`):**
+       1. `scePowerSetClockFrequency(333, 333, 166)` locked at boot in Step 02 (`+50%` CPU/bus).
+       2. Pre-swizzled PSP 16x8 textures (`GU_TRUE`) produced by `tools/pmm-extractor` in Step 03
+          and cached in `pmm-gfx` in Step 05 (`2x-4x` GE texture fillrate).
+       3. Pre-compiled native PSP GE command lists (`sceGuCallList`) + 36-byte vertex buffers
+          for static room `SetMesh` display lists in Pool 3 (`RendererCache`), so static room
+          geometry requires zero F3DEX2 re-decoding or CPU vertex copying during Pass 0 and Pass 1.
+       4. Redundant state-binding suppression in `pmm-gfx` (tracking active texture, CLUT,
+          combiner, and blend state so consecutive sub-meshes with identical materials emit
+          only `sceGuDrawArray`).
+       5. Inline Allegrex VFPU (`vfpu_asm!`) for 4x4 matrix multiply (`vmmul.q`), midpoint
+          matrix lerp (`fraction = 0.5`), and frustum plane dot products starting in Step 05/06.
 
 E) Audio Architecture (`crates/pmm-audio`)
    - MM synthesizes audio at 32,000 Hz (`32 kHz`), 16-bit stereo (`533` or `544` samples per

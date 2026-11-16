@@ -86,10 +86,14 @@ export PATH="$HOME/.cargo/bin:$PATH"
    - Test 10B (Missing `data/pmm_2s2h.pak`): Cleanly detects missing pack, renders
      diagnostic screen, logs `DIAG_ERROR: MISSING_ASSET_PAK`, and exits cleanly.
 3. Full End-to-End Positive Run in PPSSPP (`PSPModel = 1`, `step10_final_verification.log`):
-   - `VFPU_MATRIX_AND_VERTEX_EQUIVALENCE: OK(max_abs_err < 1e-4)`
-   - `DCACHE_WRITEBACK_AUDITED: OK`
-   - `FULL_FLOW: Boot -> Title -> FileSelect(Slot0) -> DayTelop -> ClockTown(300 ticks) -> Save -> CleanExit`
-   - `AVG_TICK_TIME_US: <us>` (measured via `sceRtcGetCurrentTick`, target `<= 40,000 us` per 20 FPS tick)
+   - `CLOCK_LOCK_333_166_MHZ: OK`
+   - `VFPU_MATRIX_LERP_AND_CLIP_EQUIVALENCE: OK(max_abs_err < 1e-4)`
+   - `DCACHE_WRITEBACK_AND_UNCACHED_GE_RINGS: OK`
+   - `FULL_FLOW: Boot -> Title -> FileSelect(Slot0) -> DayTelop -> ClockTown(300 logic ticks / 600 frames @ 40 FPS) -> Save -> CleanExit`
+   - `TARGET_PRESENTATION_FPS: 40.0` (running on top of authentic 20.0 Hz N64 game logic)
+   - `AVG_FRAME_LATENCY_US: <us>` (measured via `sceKernelGetSystemTimeLow` / `sceRtcGetCurrentTick`, target `<= 25,000 us` / `25.0 ms` per presented frame)
+   - `AVG_PASS0_SIM_PLUS_RENDER_US: <us>` (target `<= 22,000 us`)
+   - `AVG_PASS1_INTERP_RENDER_US: <us>` (target `<= 10,000 us`)
    - `PEAK_USER_DRAM_ALLOCATED_BYTES: <= 41943040` (`<= 40.0 MiB`)
    - `FINAL_FREE_USER_DRAM_BYTES: >= 10485760` (`>= 10.0 MiB`)
    - `SCENE_RELOAD_LEAK_BYTES: 0`

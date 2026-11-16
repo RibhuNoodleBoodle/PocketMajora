@@ -1,5 +1,5 @@
 PROJECT HANDOFF -- OWNER-EDITABLE / RUST PSP-3000 MAJORA'S MASK
-Updated by: Gemini Argon, 2026-11-16 (STAGE 4 COMPLETE -- ALL GEMINI FLASH STEPS 01..10 AUTHORED & READY)
+Updated by: Gemini Argon, 2026-11-16 (STAGE 4 UPDATED FOR 40 FPS / 25 MS LATENCY TARGET)
 This is a plain-text continuity record. Both Argon and Flash must READ it first.
 
 ======================================================================
@@ -34,7 +34,7 @@ RUST PSP SDK SELECTED: `AndrewAltimit/rust-psp` pinned at commit `e4cc06f6fa50fa
 RUST TOOLCHAIN PIN: `nightly-2026-04-13` with `components = ["rust-src"]` (to be bootstrapped by Flash in Step 01)
 ROM: NOT FOUND on `/mnt/6421-8598` or `/home/ribhu`; target US 1.0 ROM is 32 MiB compressed CRC32 `0xB428D8A7` / decompressed SHA-1 `d6133ace5afaa0882cf214cf88daba39e266c078` (Step 03 includes both real US ROM extraction and a ROM-less synthetic test pack generator so builds/tests never stall)
 DEPENDENCIES / LICENSES: Documented in `docs/architecture/DEPENDENCIES_AND_LICENSES.txt` (Root & `majora_code/` CC0-1.0; `AndrewAltimit/rust-psp` MIT; `psp_ref/src/port/psp/**` clean-room reference only).
-ARCHITECTURE VERDICT: **CONDITIONAL GO** (`docs/architecture/FEASIBILITY_GATE.txt`). Route A selected: root Cargo workspace (`pocket-majora` + `crates/pmm-{schema,assets,gfx,audio,game}` + host `tools/pmm-extractor`), 40.0 MiB User DRAM / 2.0 MiB VRAM quantitative budgets, 20.0 FPS deterministic simulation (`docs/architecture/PSP_RUST_ARCHITECTURE.txt`).
+ARCHITECTURE VERDICT: **CONDITIONAL GO** (`docs/architecture/FEASIBILITY_GATE.txt`). Route A selected: root Cargo workspace (`pocket-majora` + `crates/pmm-{schema,assets,gfx,audio,game}` + host `tools/pmm-extractor`), 40.0 MiB User DRAM / 2.0 MiB VRAM quantitative budgets, **40.0 FPS (`<= 25.0 ms` latency) matrix-interpolated presentation (`fraction = 0.5` & `1.0`) running on top of authentic 20.0 Hz N64 game logic** (`docs/architecture/PSP_RUST_ARCHITECTURE.txt`).
 LATEST FLASH STEP: ALL 10 STEPS AUTHORED (`gemini_flash/Gemini_Step_01.txt` .. `gemini_flash/Gemini_Step_10.txt`; start with `Gemini_Step_01.txt`; see `gemini_flash/INDEX.txt`)
 RESEARCH, ARCHITECTURE & WORKER PROMPT OUTPUTS:
   - `docs/research/00_root_audit.txt` (Stage 0 audit)
@@ -50,7 +50,8 @@ GIT COMMITS FOR THIS PROJECT:
   - `f651965f238d4b3c9cc1d633b71cc707d0bf9aa0` (Stage 1 toolchain research & Flash Step 01 prompt)
   - `c80d8bd2ba6b6c36c2ce81b607bbb9ba329a28bd` (Stage 2 upstream audit & reference port matrix)
   - `e01332bd5948c3a6ef222a1ac08c0d781a5505ee` (Stage 3 architecture, license audit, & CONDITIONAL GO gate)
-  - Stage 4 planning milestone commit: committed with `gemini_flash/Gemini_Step_02.txt` .. `gemini_flash/Gemini_Step_10.txt`, `gemini_flash/INDEX.txt`, and `handoff.txt`
+  - `7942393604004d6cf775e59f76486d099d08d577` (Stage 4 initial Flash worker prompt suite Steps 02..10)
+  - Stage 4 40 FPS / 25 ms optimization update commit: committed with updated `PSP_RUST_ARCHITECTURE.txt`, `FEASIBILITY_GATE.txt`, `Gemini_Step_02,03,05,06,09,10.txt`, `INDEX.txt`, and `handoff.txt`
 BUILD (EBOOT.PBP): NOT RUN (Queued for Flash in `gemini_flash/Gemini_Step_01.txt`)
 PPSSPP TEST: NOT RUN (Queued for Flash in `gemini_flash/Gemini_Step_01.txt`)
 REAL PSP-3000 TEST: NOT RUN
@@ -98,17 +99,17 @@ OWNER PRIORITIES:
 - Commit every genuine major milestone.
 
 OWNER NEW INSTRUCTIONS / MANUAL OBSERVATIONS:
-[Add any new requirements, known paths, bugs, screenshots, or priorities here.]
+- Target frame rate is 40 FPS (2x frame-interpolated presentation at 25,000 us/frame while preserving authentic 20 Hz N64 simulation/3-Day Clock timing) rather than ~20-21 FPS in the original. Modify architecture and optimization steps accordingly.
 
 ======================================================================
 AGENT CHECKPOINT (MODELS UPDATE THIS SECTION FREQUENTLY)
 ======================================================================
-What just happened: Completed Stage 4. Authored all remaining Gemini Flash worker prompts (`gemini_flash/Gemini_Step_02.txt` through `gemini_flash/Gemini_Step_10.txt`) and updated `gemini_flash/INDEX.txt`.
-Last checked source path: /mnt/6421-8598/building/PocketMajora/gemini_flash/INDEX.txt
-Last verified command / output: Verified `Gemini_Step_01.txt` .. `Gemini_Step_10.txt` on disk and committed Stage 4 milestone.
-Modified files since last commit: Added `gemini_flash/Gemini_Step_02.txt` .. `gemini_flash/Gemini_Step_10.txt`, updated `gemini_flash/INDEX.txt` and `handoff.txt`.
-Potential work loss if session ends now: NONE (all Stage 0-4 research, architecture, and Flash step prompts 01..10 are written and committed).
-Exact next command/action: Run Gemini Flash starting on `gemini_flash/Gemini_Step_01.txt` and proceed sequentially through `Gemini_Step_10.txt`.
+What just happened: Completed 40 FPS (`<= 25.0 ms` frame latency) architecture and optimization update across `docs/architecture/{PSP_RUST_ARCHITECTURE,FEASIBILITY_GATE}.txt`, `gemini_flash/Gemini_Step_{02,03,05,06,09,10}.txt`, and `gemini_flash/INDEX.txt`. Game simulation remains at deterministic 20 Hz (`50,000 us`) while rendering 2 matrix-interpolated passes per tick (`fraction = 0.5` at `+25 ms`, `1.0` at `+50 ms`) with 333/166 MHz clock lock, pre-swizzled textures, compiled `sceGuCallList` room meshes, and VFPU matrix/lerp acceleration.
+Last checked source path: /mnt/6421-8598/building/PocketMajora/gemini_flash/Gemini_Step_06.txt
+Last verified command / output: Verified all updated architecture and Flash step files on disk.
+Modified files since last commit: `docs/architecture/PSP_RUST_ARCHITECTURE.txt`, `docs/architecture/FEASIBILITY_GATE.txt`, `gemini_flash/Gemini_Step_{02,03,05,06,09,10}.txt`, `gemini_flash/INDEX.txt`, `handoff.txt`.
+Potential work loss if session ends now: NONE (all 40 FPS updates written and committed).
+Exact next command/action: Run Gemini Flash sequentially starting on `gemini_flash/Gemini_Step_01.txt` through `gemini_flash/Gemini_Step_10.txt`.
 
 ======================================================================
 APPEND-ONLY CHANGE LOG
@@ -137,14 +138,15 @@ APPEND-ONLY CHANGE LOG
              `docs/architecture/DEPENDENCIES_AND_LICENSES.txt`, and
              `docs/architecture/FEASIBILITY_GATE.txt`, plus updated
              `gemini_flash/INDEX.txt`. Formal verdict: **CONDITIONAL GO**.
-2026-11-16 Gemini Argon: Completed Stage 4 per owner request. Authored all
-             remaining Flash implementation prompts (`gemini_flash/Gemini_Step_02.txt`
-             through `gemini_flash/Gemini_Step_10.txt`) covering workspace/schema,
-             ROM/XML extractor (`pmm-extractor`), bounded PSP asset loader (`pmm-assets`),
-             F3DEX2->`sceGu` renderer (`pmm-gfx`), 20 FPS `Graph`/`PadMgr`/`SysFlashrom`
-             (`pmm-game`), 32 kHz audio & suspend/resume (`pmm-audio`), interactive
-             Title/FileSelect, playable Clock Town & 3-Day Clock cycle, and
-             VFPU/cache hardening + release packaging.
+2026-11-16 Gemini Argon: Completed Stage 4 (`7942393`). Authored all remaining
+             Flash implementation prompts (`gemini_flash/Gemini_Step_02.txt`
+             through `gemini_flash/Gemini_Step_10.txt`).
+2026-11-16 Gemini Argon: Updated architecture and Flash optimization steps for
+             owner's **40 FPS / 25.0 ms latency target** (20 Hz N64 logic + 2x
+             interpolated render passes per tick, 333/166 MHz clock lock in
+             Step 02, pre-swizzled textures in Step 03, compiled `sceGuCallList`
+             room meshes & VFPU matrix lerp in Step 05, and 2-pass `25,000 us`
+             no-catch-up pacer + `FrameInterpolator` in Step 06).
 
 ======================================================================
 RECOVERY RULES (IF ARGON OR FLASH FAILS / TOKENS EXPIRE)

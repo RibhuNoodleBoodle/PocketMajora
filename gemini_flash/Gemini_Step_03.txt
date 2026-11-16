@@ -37,8 +37,11 @@ Your objective in Step 03:
      * Extracts each declared resource from the corresponding decompressed VROM
        segment, converts big-endian N64 structures (`Vtx`, `Gfx`, `Mtx`, `RGBA16`,
        `CollisionHeader`, `Scene`/`Room` commands, `TextMM` message tables) to
-       16-byte aligned little-endian payloads, and writes `pmm_2s2h.pak` using
-       `crates/pmm-schema`'s `PmmPakHeader` + sorted `PmmPakEntry` index table.
+       16-byte aligned little-endian payloads, **pre-swizzles textures into PSP GE
+       16x8 byte tiles (`PmmPakEntry::FLAG_PSP_SWIZZLED = 1`, giving 2x-4x PSP GE
+       rasterization throughput for the 40 FPS / 25 ms frame budget)**, and writes
+       `pmm_2s2h.pak` using `crates/pmm-schema`'s `PmmPakHeader` + sorted
+       `PmmPakEntry` index table.
    - Subcommand `build-synthetic-fixture --out <pak_path>` (for ROM-less CI &
      negative testing when the user's ROM is not yet placed on disk):
      * Generates a clearly-marked non-copyrighted synthetic test pack
