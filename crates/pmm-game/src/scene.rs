@@ -1,8 +1,14 @@
 use alloc::vec::Vec;
-use pmm_assets::{BoundedArena, PakSource, ResourceManager};
+use pmm_assets::{BoundedArena, PakSource, ResourceManager, SegmentTable};
 
 use crate::actors::ActorInstance;
 use crate::bgcheck::CollisionMesh;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct RoomDisplayListEntry {
+    pub opa_dl: u32,
+    pub xlu_dl: u32,
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SceneId {
@@ -116,16 +122,105 @@ pub fn otr_scene_execute_commands(seg2_bytes: &[u8]) -> SceneHeaderInfo {
     info
 }
 
+/// Walk big-endian N64 `RoomCmd` stream (`0x0A` `SCENE_CMD_ID_ROOM_SHAPE`) to extract
+/// `RoomShapeNormal` (type 0) and `RoomShapeCullable` (type 2) display list addresses.
+pub fn otr_room_extract_dls(seg3_bytes: &[u8]) -> Vec<RoomDisplayListEntry> {
+    let mut out = Vec::new();
+    let max_cmds = (seg3_bytes.len() / 8).min(64);
+    for i in 0..max_cmds {
+        let base = i * 8;
+        let code = seg3_bytes[base];
+        if code == 0x14 {
+            break;
+        }
+        if code == 0x0A {
+            let w1 = u32::from_be_bytes([
+                seg3_bytes[base + 4],
+                seg3_bytes[base + 5],
+                seg3_bytes[base + 6],
+                seg3_bytes[base + 7],
+            ]);
+            if (w1 >> 24) != 0x03 {
+                continue;
+            }
+            let shape_off = (w1 & 0x00FF_FFFF) as usize;
+            if shape_off + 8 > seg3_bytes.len() {
+                continue;
+            }
+            let stype = seg3_bytes[shape_off];
+            let num_entries = seg3_bytes[shape_off + 1] as usize;
+            let entries_ptr = u32::from_be_bytes([
+                seg3_bytes[shape_off + 4],
+                seg3_bytes[shape_off + 5],
+                seg3_bytes[shape_off + 6],
+                seg3_bytes[shape_off + 7],
+            ]);
+            if (entries_ptr >> 24) != 0x03 {
+                continue;
+            }
+            let ent_off = (entries_ptr & 0x00FF_FFFF) as usize;
+            let stride = match stype {
+                0 => 8,  // RoomShapeNormal: (opa: u32, xlu: u32)
+                2 => 16, // RoomShapeCullable: (bounds[8], opa: u32, xlu: u32)
+                _ => continue,
+            };
+            let dl_off_in_entry = if stype == 2 { 8 } else { 0 };
+            for k in 0..num_entries.min(64) {
+                let e = ent_off + k * stride;
+                if e + stride > seg3_bytes.len() {
+                    break;
+                }
+                let opa_dl = u32::from_be_bytes([
+                    seg3_bytes[e + dl_off_in_entry],
+                    seg3_bytes[e + dl_off_in_entry + 1],
+                    seg3_bytes[e + dl_off_in_entry + 2],
+                    seg3_bytes[e + dl_off_in_entry + 3],
+                ]);
+                let xlu_dl = u32::from_be_bytes([
+                    seg3_bytes[e + dl_off_in_entry + 4],
+                    seg3_bytes[e + dl_off_in_entry + 5],
+                    seg3_bytes[e + dl_off_in_entry + 6],
+                    seg3_bytes[e + dl_off_in_entry + 7],
+                ]);
+                if opa_dl != 0 || xlu_dl != 0 {
+                    out.push(RoomDisplayListEntry { opa_dl, xlu_dl });
+                }
+            }
+        }
+    }
+    out
+}
+
 pub struct ActiveScene {
     pub id: SceneId,
     pub header: SceneHeaderInfo,
     pub scene_bytes_loaded: usize,
     pub room_bytes_loaded: usize,
     pub rom_col_polys: usize,
+    pub room_dls: Vec<RoomDisplayListEntry>,
+    seg2_ptr: *const u8,
+    seg2_len: usize,
+    seg3_ptr: *const u8,
+    seg3_len: usize,
     pub collision: CollisionMesh,
     pub spawn_pos: [f32; 3],
     pub actors: Vec<ActorInstance>,
     pub arena_used_after_spawn: usize,
+}
+
+impl ActiveScene {
+    pub fn build_segment_table(&self) -> SegmentTable {
+        let mut segs = SegmentTable::new(0x8000_0000, 0x8080_0000);
+        if !self.seg2_ptr.is_null() && self.seg2_len > 0 {
+            let s2 = unsafe { core::slice::from_raw_parts(self.seg2_ptr, self.seg2_len) };
+            let _ = segs.set_segment(0x02, s2);
+        }
+        if !self.seg3_ptr.is_null() && self.seg3_len > 0 {
+            let s3 = unsafe { core::slice::from_raw_parts(self.seg3_ptr, self.seg3_len) };
+            let _ = segs.set_segment(0x03, s3);
+        }
+        segs
+    }
 }
 
 /// Build playable Clock Town / Inside Tower collision geometry & spawn points, augmenting
@@ -191,9 +286,13 @@ pub fn otr_play_spawn_scene<S: PakSource>(
     let mut scene_bytes_loaded = 0usize;
     let mut room_bytes_loaded = 0usize;
     let mut parsed_rom_col: Option<CollisionMesh> = None;
+    let mut room_dls = Vec::new();
+    let mut seg2_ptr: *const u8 = core::ptr::null();
+    let mut seg3_ptr: *const u8 = core::ptr::null();
 
     if let Ok((_hdr, seg2_bytes)) = res.load_by_name_into_arena(scene.seg_path(), arena) {
         scene_bytes_loaded = seg2_bytes.len();
+        seg2_ptr = seg2_bytes.as_ptr();
         header = otr_scene_execute_commands(seg2_bytes);
         if let Some(col_off) = header.col_header_off {
             parsed_rom_col = CollisionMesh::from_n64_col_header(seg2_bytes, col_off);
@@ -201,6 +300,8 @@ pub fn otr_play_spawn_scene<S: PakSource>(
     }
     if let Ok((_hdr, seg3_bytes)) = res.load_by_name_into_arena(scene.room0_path(), arena) {
         room_bytes_loaded = seg3_bytes.len();
+        seg3_ptr = seg3_bytes.as_ptr();
+        room_dls = otr_room_extract_dls(seg3_bytes);
     }
 
     let (collision, spawn_pos) = build_playable_slice_collision(scene);
@@ -215,6 +316,11 @@ pub fn otr_play_spawn_scene<S: PakSource>(
         scene_bytes_loaded,
         room_bytes_loaded,
         rom_col_polys,
+        room_dls,
+        seg2_ptr,
+        seg2_len: scene_bytes_loaded,
+        seg3_ptr,
+        seg3_len: room_bytes_loaded,
         collision,
         spawn_pos,
         actors,

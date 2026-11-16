@@ -12,7 +12,6 @@ use crate::padmgr::{PadInput, n64_btn};
 use crate::player::{OcarinaSong, PLAYER_ENTITY_ID, Player, PlayerForm};
 use crate::save::{FlashIo, SaveContext, SysFlashrom};
 use crate::scene::{ActiveScene, SceneId, otr_play_spawn_scene};
-use crate::states::render_f3dex2_quad_layer;
 use crate::thga::GfxPool;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -184,7 +183,7 @@ impl PlayState {
         }
     }
 
-    pub fn draw_frame<S: PakSource, B: GfxBackend>(
+    pub fn draw_3d_world<S: PakSource, B: GfxBackend>(
         &self,
         fraction: f32,
         pool: &mut GfxPool,
@@ -193,53 +192,107 @@ impl PlayState {
         backend: &mut B,
         interp: &mut FrameInterpolator,
     ) {
+        renderer.set_overlay_mode(false, backend);
+        if self.camera.letterbox_bar_px > 0 {
+            let (scissor_rect, _, _) = self.camera.scissor;
+            backend.set_scissor(
+                scissor_rect.x0,
+                scissor_rect.y0,
+                scissor_rect.x1,
+                scissor_rect.y1,
+            );
+        }
+
+        // 1. Real N64 big-endian Room Display Lists (`RoomShapeNormal`/`RoomShapeCullable`)
+        if !self.scene.room_dls.is_empty() {
+            let segs = self.scene.build_segment_table();
+            let mut tex_scratch = [0u8; 64];
+            let scene_tag = (self.scene.id as u64) << 48;
+            for (idx, entry) in self.scene.room_dls.iter().enumerate() {
+                if entry.opa_dl != 0 {
+                    let list_id = scene_tag | ((idx as u64) << 33) | (entry.opa_dl as u64);
+                    let _ = renderer.process_static_be_display_list(
+                        list_id,
+                        entry.opa_dl,
+                        &segs,
+                        res,
+                        &mut tex_scratch,
+                        backend,
+                    );
+                }
+            }
+            for (idx, entry) in self.scene.room_dls.iter().enumerate() {
+                if entry.xlu_dl != 0 {
+                    let list_id = scene_tag | (1 << 47) | ((idx as u64) << 33) | (entry.xlu_dl as u64);
+                    let _ = renderer.process_static_be_display_list(
+                        list_id,
+                        entry.xlu_dl,
+                        &segs,
+                        res,
+                        &mut tex_scratch,
+                        backend,
+                    );
+                }
+            }
+        }
+
+        // 2. 3D world-space markers for Link & interactive Clock Town actors
         let mut target = mat4_identity();
         target[3][0] = self.player.pos[0];
         target[3][1] = self.player.pos[1];
         target[3][2] = self.player.pos[2];
         let p_lerp = interp.resolve(PLAYER_ENTITY_ID, 0, &target, fraction);
-        let px = p_lerp[3][0].clamp(-200.0, 200.0) as i16;
-        let pz = (p_lerp[3][2] * 0.25).clamp(-90.0, 90.0) as i16;
+        let px = p_lerp[3][0];
+        let py = p_lerp[3][1];
+        let pz = p_lerp[3][2];
 
-        // 1. Clock Town Plaza / Scene ground quad
-        let sky_rgba = if self.scene.id == SceneId::InsideTower {
-            [50, 40, 70, 255]
-        } else if self.clock.time >= 0xC000 || self.clock.time < 0x4000 {
-            [24, 34, 68, 255]
-        } else {
-            [85, 165, 110, 255]
-        };
-        render_f3dex2_quad_layer(pool, renderer, res, backend, -190, -80, 190, 80, sky_rgba);
-
-        // 2. Active scene actors
-        for actor in &self.scene.actors {
-            if actor.collected {
-                continue;
-            }
-            let ax = (actor.pos[0] * 0.45).clamp(-200.0, 200.0) as i16;
-            let az = (actor.pos[2] * 0.22).clamp(-80.0, 80.0) as i16;
-            render_f3dex2_quad_layer(
-                pool,
-                renderer,
-                res,
-                backend,
-                ax - 8,
-                az - 8,
-                ax + 8,
-                az + 8,
-                actor.color_rgba(),
-            );
-        }
-
-        // 3. Player marker (Green = Human, Brown/Leaf = Deku)
         let player_rgba = if self.player.form == PlayerForm::DekuScrub {
             [180, 130, 50, 255]
         } else {
             [50, 210, 80, 255]
         };
-        render_f3dex2_quad_layer(pool, renderer, res, backend, px - 9, pz - 9, px + 9, pz + 9, player_rgba);
+        backend.set_texture_enabled(false);
+        backend.set_cull_mode(false, false);
+        backend.set_model_matrix(&mat4_identity());
+        let emit_marker = |cx: f32, cy: f32, cz: f32, r: f32, h: f32, col: [u8; 4], bk: &mut B| {
+            let c = u32::from_le_bytes(col);
+            let verts = [
+                pmm_gfx::PspVertex { u: 0.0, v: 0.0, color: c, x: cx - r, y: cy, z: cz },
+                pmm_gfx::PspVertex { u: 0.0, v: 0.0, color: c, x: cx + r, y: cy, z: cz },
+                pmm_gfx::PspVertex { u: 0.0, v: 0.0, color: c, x: cx + r, y: cy + h, z: cz },
+                pmm_gfx::PspVertex { u: 0.0, v: 0.0, color: c, x: cx - r, y: cy, z: cz },
+                pmm_gfx::PspVertex { u: 0.0, v: 0.0, color: c, x: cx + r, y: cy + h, z: cz },
+                pmm_gfx::PspVertex { u: 0.0, v: 0.0, color: c, x: cx - r, y: cy + h, z: cz },
+            ];
+            bk.draw_triangles(&verts);
+        };
+        emit_marker(px, py, pz, 14.0, 44.0, player_rgba, backend);
+        for actor in &self.scene.actors {
+            if actor.collected {
+                continue;
+            }
+            emit_marker(
+                actor.pos[0],
+                actor.pos[1],
+                actor.pos[2],
+                12.0,
+                36.0,
+                actor.color_rgba(),
+                backend,
+            );
+        }
+        let _ = pool;
+    }
 
-        // 4. OVERLAY_DISP HUD + Letterbox bars
+    pub fn draw_2d_overlay<S: PakSource, B: GfxBackend>(
+        &self,
+        pool: &mut GfxPool,
+        renderer: &mut Renderer,
+        res: &mut ResourceManager<S>,
+        backend: &mut B,
+    ) {
+        backend.set_scissor(0, 0, 480, 272);
+        renderer.set_overlay_mode(true, backend);
         HudRenderer::draw(
             &self.save,
             &self.clock,
@@ -249,5 +302,18 @@ impl PlayState {
             res,
             backend,
         );
+    }
+
+    pub fn draw_frame<S: PakSource, B: GfxBackend>(
+        &self,
+        fraction: f32,
+        pool: &mut GfxPool,
+        renderer: &mut Renderer,
+        res: &mut ResourceManager<S>,
+        backend: &mut B,
+        interp: &mut FrameInterpolator,
+    ) {
+        self.draw_3d_world(fraction, pool, renderer, res, backend, interp);
+        self.draw_2d_overlay(pool, renderer, res, backend);
     }
 }

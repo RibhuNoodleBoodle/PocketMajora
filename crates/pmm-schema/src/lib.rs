@@ -359,6 +359,31 @@ pub mod gbi {
 
     // G_MW_SEGMENT index
     pub const G_MW_SEGMENT: u8 = 0x06;
+
+    // GeometryMode bits (`F3DEX2`)
+    pub const G_ZBUFFER: u32 = 0x0000_0001;
+    pub const G_SHADE: u32 = 0x0000_0004;
+    pub const G_CULL_FRONT: u32 = 0x0000_0200;
+    pub const G_CULL_BACK: u32 = 0x0000_0400;
+    pub const G_FOG: u32 = 0x0001_0000;
+    pub const G_LIGHTING: u32 = 0x0002_0000;
+    pub const G_TEXTURE_GEN: u32 = 0x0004_0000;
+    pub const G_SHADING_SMOOTH: u32 = 0x0020_0000;
+
+    // Image formats & sizes (`G_SETTIMG` / `G_SETTILE`)
+    pub const G_IM_FMT_RGBA: u8 = 0;
+    pub const G_IM_FMT_YUV: u8 = 1;
+    pub const G_IM_FMT_CI: u8 = 2;
+    pub const G_IM_FMT_IA: u8 = 3;
+    pub const G_IM_FMT_I: u8 = 4;
+
+    pub const G_IM_SIZ_4B: u8 = 0;
+    pub const G_IM_SIZ_8B: u8 = 1;
+    pub const G_IM_SIZ_16B: u8 = 2;
+    pub const G_IM_SIZ_32B: u8 = 3;
+
+    pub const G_TX_MIRROR: u8 = 0x1;
+    pub const G_TX_CLAMP: u8 = 0x2;
 }
 
 /// 64-bit F3DEX2 display-list command word in little-endian runtime format.
@@ -378,6 +403,17 @@ impl GfxWord {
     pub const fn opcode(self) -> u8 {
         ((self.w0 >> 24) & 0xFF) as u8
     }
+
+    #[inline]
+    pub fn from_be_bytes(buf: &[u8]) -> Option<Self> {
+        if buf.len() < 8 {
+            return None;
+        }
+        Some(Self {
+            w0: u32::from_be_bytes([buf[0], buf[1], buf[2], buf[3]]),
+            w1: u32::from_be_bytes([buf[4], buf[5], buf[6], buf[7]]),
+        })
+    }
 }
 
 /// 16-byte N64 F3DEX2 vertex (`Vtx`).
@@ -388,6 +424,28 @@ pub struct N64Vtx {
     pub flag: u16,
     pub tc: [i16; 2],
     pub cn: [u8; 4], // R, G, B, A (or normal x, y, z, a)
+}
+
+impl N64Vtx {
+    #[inline]
+    pub fn from_be_bytes(buf: &[u8]) -> Option<Self> {
+        if buf.len() < 16 {
+            return None;
+        }
+        Some(Self {
+            ob: [
+                i16::from_be_bytes([buf[0], buf[1]]),
+                i16::from_be_bytes([buf[2], buf[3]]),
+                i16::from_be_bytes([buf[4], buf[5]]),
+            ],
+            flag: u16::from_be_bytes([buf[6], buf[7]]),
+            tc: [
+                i16::from_be_bytes([buf[8], buf[9]]),
+                i16::from_be_bytes([buf[10], buf[11]]),
+            ],
+            cn: [buf[12], buf[13], buf[14], buf[15]],
+        })
+    }
 }
 
 /// 64-byte N64 16.16 fixed-point matrix (`Mtx`).
@@ -444,6 +502,23 @@ impl N64Mtx {
             r += 1;
         }
         Self { integer, frac }
+    }
+
+    pub fn from_be_bytes(buf: &[u8]) -> Option<Self> {
+        if buf.len() < 64 {
+            return None;
+        }
+        let mut integer = [[0i16; 4]; 4];
+        let mut frac = [[0u16; 4]; 4];
+        for r in 0..4 {
+            for c in 0..4 {
+                let ioff = (r * 4 + c) * 2;
+                let foff = 32 + ioff;
+                integer[r][c] = i16::from_be_bytes([buf[ioff], buf[ioff + 1]]);
+                frac[r][c] = u16::from_be_bytes([buf[foff], buf[foff + 1]]);
+            }
+        }
+        Some(Self { integer, frac })
     }
 }
 

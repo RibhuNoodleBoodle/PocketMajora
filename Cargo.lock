@@ -101,6 +101,7 @@ dependencies = [
 name = "pmm-gfx"
 version = "0.1.0"
 dependencies = [
+ "libm",
  "pmm-assets",
  "pmm-schema",
  "psp",

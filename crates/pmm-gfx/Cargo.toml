@@ -8,6 +8,7 @@ default = []
 psp = ["dep:psp"]
 
 [dependencies]
+libm = "0.2.16"
 pmm-schema = { path = "../pmm-schema" }
 pmm-assets = { path = "../pmm-assets" }
 psp = { path = "../../tools/rust-psp/psp", optional = true }

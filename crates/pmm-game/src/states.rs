@@ -177,6 +177,7 @@ pub fn render_f3dex2_quad_layer<S: PakSource, B: GfxBackend>(
     let _ = segs.set_segment(0x0E, &vtx_bytes);
     let mut tex_scratch = [0u8; 64];
 
+    renderer.set_overlay_mode(true, backend);
     let _ = renderer.process_display_list(
         pool.poly_opa.head_cmds(),
         &segs,

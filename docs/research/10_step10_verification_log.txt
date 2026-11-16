@@ -1,13 +1,13 @@
 STEP 10 VERIFICATION LOG — HARDWARE HARDENING, NEGATIVE DIAGNOSTICS & RELEASE PACKAGING
 Date: 2026-11-16
 
-1. Host Unit Tests (All 6 Host Crates, 63 / 63 PASSED):
+1. Host Unit Tests (All 6 Host Crates, 64 / 64 PASSED):
    Command: `cargo test -p pmm-schema -p pmm-assets -p pmm-gfx -p pmm-audio -p pmm-game -p pmm-extractor --target x86_64-unknown-linux-gnu`
    - pmm-assets:    8 passed, 0 failed
    - pmm-audio:     8 passed, 0 failed
    - pmm-extractor: 10 passed, 0 failed
    - pmm-game:      20 passed, 0 failed
-   - pmm-gfx:       11 passed, 0 failed (including vfpu_equivalence_and_vec4_transform)
+   - pmm-gfx:       12 passed, 0 failed (including vfpu_equivalence_and_vec4_transform & be_rom_display_list_lights_normals_and_decodes_n64_textures)
    - pmm-schema:    6 passed, 0 failed
 
 2. Reproducible Release Packaging (`./scripts/package_release.sh`):
@@ -26,13 +26,14 @@ Date: 2026-11-16
    SETTINGS_INI_PERSIST: OK(16_9=true, vsync=false, hud_margin=8)
    VFPU_MATRIX_LERP_AND_CLIP_EQUIVALENCE: OK(max_abs_err=0.000000)
    DCACHE_WRITEBACK_AND_UNCACHED_GE_RINGS: OK
+   ROOM_3D_RENDER_STATS: tris=240920, calllist_hits=6908, textures=43
    FULL_FLOW: Boot -> Title -> FileSelect(Slot0) -> DayTelop -> ClockTown(300 logic ticks / 600 frames @ 40 FPS) -> Save -> CleanExit
    TARGET_PRESENTATION_FPS: 40.0
-   AVG_FRAME_LATENCY_US: 24989
-   AVG_PASS0_SIM_PLUS_RENDER_US: 318
-   AVG_PASS1_INTERP_RENDER_US: 211
+   AVG_FRAME_LATENCY_US: 24952
+   AVG_PASS0_SIM_PLUS_RENDER_US: 473
+   AVG_PASS1_INTERP_RENDER_US: 177
    PEAK_USER_DRAM_ALLOCATED_BYTES: 37748736
-   FINAL_FREE_USER_DRAM_BYTES: 20428544
+   FINAL_FREE_USER_DRAM_BYTES: 20402176
    SCENE_RELOAD_LEAK_BYTES: 0
    STATUS: PASS
 

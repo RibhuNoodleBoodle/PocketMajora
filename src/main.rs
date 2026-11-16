@@ -8,7 +8,7 @@ mod platform;
 use alloc::format;
 use pmm_assets::ResourceManager;
 use pmm_gfx::Renderer;
-use pmm_gfx::math::{Mat4, mat4_identity};
+use pmm_gfx::math::{mat4_identity, mat4_ortho};
 use pmm_gfx::vfpu::verify_vfpu_equivalence;
 use pmm_game::clock::ClockEvent;
 use pmm_game::graph::{FRAME_40FPS_USEC, GameStateId, NoCatchUpPacer};
@@ -84,12 +84,7 @@ fn psp_main() {
     let mut pacer = NoCatchUpPacer::new();
     let mut flash = SysFlashrom::new(platform::flashrom_psp::PspFlashIo);
 
-    let proj: Mat4 = [
-        [1.0 / 240.0, 0.0, 0.0, 0.0],
-        [0.0, 1.0 / 136.0, 0.0, 0.0],
-        [0.0, 0.0, -0.1, 0.0],
-        [0.0, 0.0, 0.0, 1.0],
-    ];
+    let proj = mat4_ortho(-240.0, 240.0, -136.0, 136.0, -10.0, 10.0);
     let view = mat4_identity();
 
     let pace_and_account = |pacer: &mut NoCatchUpPacer, work_start: u32| -> u32 {
@@ -289,8 +284,13 @@ fn psp_main() {
             _ => {}
         }
 
-        gfx.begin_frame(0xFF20_1810, &proj, &view);
-        play.draw_frame(0.5, &mut pool, &mut renderer, &mut mgr, &mut gfx, &mut interp);
+        let proj_3d = play.camera.build_perspective_proj(settings.aspect_ratio_16_9);
+        let view_3d_0 = play.camera.build_view_matrix(&mut interp, 0.5);
+        gfx.begin_frame(0xFF38_2818, &proj_3d, &view_3d_0);
+        renderer.begin_frame();
+        play.draw_3d_world(0.5, &mut pool, &mut renderer, &mut mgr, &mut gfx, &mut interp);
+        gfx.set_matrices(&proj, &view);
+        play.draw_2d_overlay(&mut pool, &mut renderer, &mut mgr, &mut gfx);
         gfx.end_frame_and_swap(settings.vsync);
         let p0_work = measure_elapsed_us(p0_start);
         pass0_work_sum_us += p0_work as u64;
@@ -299,8 +299,12 @@ fn psp_main() {
 
         // --- Pass 1: Pure Matrix-Interpolated Presentation (fraction = 1.0) ---
         let p1_start = unsafe { sys::sceKernelGetSystemTimeLow() };
-        gfx.begin_frame(0xFF20_1810, &proj, &view);
-        play.draw_frame(1.0, &mut pool, &mut renderer, &mut mgr, &mut gfx, &mut interp);
+        let view_3d_1 = play.camera.build_view_matrix(&mut interp, 1.0);
+        gfx.begin_frame(0xFF38_2818, &proj_3d, &view_3d_1);
+        renderer.begin_frame();
+        play.draw_3d_world(1.0, &mut pool, &mut renderer, &mut mgr, &mut gfx, &mut interp);
+        gfx.set_matrices(&proj, &view);
+        play.draw_2d_overlay(&mut pool, &mut renderer, &mut mgr, &mut gfx);
         gfx.end_frame_and_swap(settings.vsync);
         let p1_work = measure_elapsed_us(p1_start);
         pass1_work_sum_us += p1_work as u64;
@@ -339,6 +343,7 @@ fn psp_main() {
          SETTINGS_INI_PERSIST: {}(16_9={}, vsync={}, hud_margin={})\n\
          VFPU_MATRIX_LERP_AND_CLIP_EQUIVALENCE: {}(max_abs_err={:.6})\n\
          DCACHE_WRITEBACK_AND_UNCACHED_GE_RINGS: OK\n\
+         ROOM_3D_RENDER_STATS: tris={}, calllist_hits={}, textures={}\n\
          FULL_FLOW: Boot -> Title -> FileSelect(Slot0) -> DayTelop -> ClockTown({} logic ticks / {} frames @ 40 FPS) -> Save -> CleanExit\n\
          TARGET_PRESENTATION_FPS: 40.0\n\
          AVG_FRAME_LATENCY_US: {}\n\
@@ -355,6 +360,9 @@ fn psp_main() {
         settings.hud_margin,
         if vfpu_err < 1e-4 { "OK" } else { "FAIL" },
         vfpu_err,
+        renderer.stats.triangles_submitted,
+        renderer.stats.static_calllist_hits,
+        renderer.stats.textures_uploaded,
         play.logic_ticks,
         play_frames,
         avg_frame_us,

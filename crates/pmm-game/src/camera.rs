@@ -1,4 +1,6 @@
-use pmm_gfx::math::{Mat4, RectI32, compute_letterbox_scissor, mat4_identity};
+use pmm_gfx::math::{
+    Mat4, RectI32, compute_letterbox_scissor, mat4_identity, mat4_look_at, mat4_perspective,
+};
 
 use crate::interp::FrameInterpolator;
 
@@ -65,16 +67,18 @@ impl Camera {
         interp.record(CAMERA_ENTITY_ID, 0, &mtx);
     }
 
+    pub fn build_perspective_proj(&self, aspect_16_9: bool) -> Mat4 {
+        let aspect = if aspect_16_9 { 480.0 / 272.0 } else { 4.0 / 3.0 };
+        mat4_perspective(60.0 * (core::f32::consts::PI / 180.0), aspect, 12.0, 12800.0)
+    }
+
     pub fn build_view_matrix(&self, interp: &mut FrameInterpolator, fraction: f32) -> Mat4 {
         let mut target = mat4_identity();
         target[3][0] = self.eye[0];
         target[3][1] = self.eye[1];
         target[3][2] = self.eye[2];
         let lerped_eye = interp.resolve(CAMERA_ENTITY_ID, 0, &target, fraction);
-        let mut view = mat4_identity();
-        view[3][0] = -lerped_eye[3][0] * 0.01;
-        view[3][1] = -lerped_eye[3][1] * 0.01;
-        view[3][2] = -lerped_eye[3][2] * 0.01;
-        view
+        let eye = [lerped_eye[3][0], lerped_eye[3][1], lerped_eye[3][2]];
+        mat4_look_at(eye, self.at, [0.0, 1.0, 0.0])
     }
 }

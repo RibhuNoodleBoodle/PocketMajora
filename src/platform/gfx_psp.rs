@@ -2,14 +2,15 @@ use alloc::vec::Vec;
 use core::ffi::c_void;
 use core::ptr;
 use pmm_gfx::math::Mat4;
-use pmm_gfx::vram::{FRAMEBUFFER_16B_BYTES, PSP_BUF_WIDTH, PSP_SCREEN_HEIGHT, PSP_SCREEN_WIDTH, VramLayout};
+use pmm_gfx::vram::{PSP_BUF_WIDTH, PSP_SCREEN_HEIGHT, PSP_SCREEN_WIDTH, VramLayout};
 use pmm_gfx::{DepthMode, GfxBackend, PspVertex};
 use pmm_schema::{PmmTexHeader, ResourceId};
 use psp::sys::{
-    self, AlphaFunc, BlendFactor, BlendOp, ClearBuffer, DepthFunc, DisplayPixelFormat,
-    FrontFaceDirection, GuContextType, GuPrimitive, GuState, GuSyncBehavior, GuSyncMode,
-    MatrixMode, MipmapLevel, ScePspFMatrix4, ShadingModel, TextureColorComponent, TextureEffect,
-    TextureFilter, TexturePixelFormat, VertexType, sceKernelDcacheWritebackInvalidateRange,
+    self, AlphaFunc, BlendFactor, BlendOp, ClearBuffer, DepthFunc, DisplayMode,
+    DisplayPixelFormat, DisplaySetBufSync, FrontFaceDirection, GuContextType, GuPrimitive,
+    GuState, GuSyncBehavior, GuSyncMode, GuTexWrapMode, MatrixMode, MipmapLevel, ScePspFMatrix4,
+    ShadingModel, TextureColorComponent, TextureEffect, TextureFilter, TexturePixelFormat,
+    VertexType, sceKernelDcacheWritebackInvalidateRange,
 };
 
 const DIRECT_LIST_BYTES: usize = 512 * 1024;
@@ -21,7 +22,7 @@ const DYN_VTX_OFFSET: usize = TEX_CACHE_OFFSET + TEX_CACHE_BYTES; // 5.5 MiB
 const DYN_VTX_HALF_BYTES: usize = 256 * 1024; // 2x 256 KiB = 512 KiB -> 6 MiB total
 
 struct CachedTexture {
-    id: ResourceId,
+    key: u64,
     ptr: *const u8,
     width: i32,
     height: i32,
@@ -66,8 +67,8 @@ impl PspGfxBackend {
             tex_cursor: TEX_CACHE_OFFSET,
             dyn_vtx_cursor: 0,
             compiling_list_start: None,
-            textures: Vec::with_capacity(64),
-            static_lists: Vec::with_capacity(64),
+            textures: Vec::with_capacity(128),
+            static_lists: Vec::with_capacity(128),
         };
         backend.init_gu();
         backend
@@ -131,17 +132,28 @@ impl PspGfxBackend {
             sys::sceGuEnable(GuState::ScissorTest);
             sys::sceGuDepthFunc(DepthFunc::GreaterOrEqual);
             sys::sceGuEnable(GuState::DepthTest);
+            sys::sceGuDepthMask(0); // 0 = depth write enabled on PSP GE
             sys::sceGuFrontFace(FrontFaceDirection::CounterClockwise);
+            sys::sceGuDisable(GuState::CullFace);
+            sys::sceGuDisable(GuState::Lighting);
+            sys::sceGuDisable(GuState::Texture2D);
             sys::sceGuShadeModel(ShadingModel::Smooth);
-            sys::sceGuEnable(GuState::Texture2D);
             sys::sceGuEnable(GuState::ClipPlanes);
             sys::sceGuFinish();
             sys::sceGuSync(GuSyncMode::Finish, GuSyncBehavior::Wait);
-            sys::sceDisplayWaitVblankStart();
+            let _ = sys::sceDisplaySetMode(
+                DisplayMode::Lcd,
+                PSP_SCREEN_WIDTH,
+                PSP_SCREEN_HEIGHT,
+            );
+            let _ = sys::sceDisplaySetFrameBuf(
+                self.fb_abs_ptr(1) as *const u8,
+                PSP_BUF_WIDTH,
+                DisplayPixelFormat::Psm5650,
+                DisplaySetBufSync::NextFrame,
+            );
             sys::sceGuDisplay(true);
         }
-        // Clear unused blur buffer bytes cleanly
-        let _ = FRAMEBUFFER_16B_BYTES;
     }
 
     pub fn begin_frame(&mut self, clear_color_abgr: u32, proj: &Mat4, view: &Mat4) {
@@ -154,10 +166,36 @@ impl PspGfxBackend {
                 self.fb_rel_ptr(draw_slot),
                 PSP_BUF_WIDTH as i32,
             );
+            // Disable scissor & enable depth writes BEFORE clearing so stale Z-target scissors
+            // never skip border rows and Z-buffer resets cleanly to 0 across all 480x272 pixels.
+            sys::sceGuDisable(GuState::ScissorTest);
+            sys::sceGuDepthMask(0);
             sys::sceGuClearColor(clear_color_abgr);
             sys::sceGuClearDepth(0);
             sys::sceGuClear(ClearBuffer::COLOR_BUFFER_BIT | ClearBuffer::DEPTH_BUFFER_BIT);
 
+            sys::sceGuScissor(0, 0, PSP_SCREEN_WIDTH as i32, PSP_SCREEN_HEIGHT as i32);
+            sys::sceGuEnable(GuState::ScissorTest);
+            sys::sceGuDepthFunc(DepthFunc::GreaterOrEqual);
+            sys::sceGuEnable(GuState::DepthTest);
+            sys::sceGuDepthOffset(0);
+            sys::sceGuDisable(GuState::Texture2D);
+            sys::sceGuDisable(GuState::CullFace);
+            sys::sceGuDisable(GuState::Blend);
+
+            self.set_matrices_inner(proj, view);
+        }
+    }
+
+    /// Update Projection & View matrices cleanly mid-frame (e.g., 3D perspective -> 2D HUD ortho).
+    pub fn set_matrices(&self, proj: &Mat4, view: &Mat4) {
+        unsafe {
+            self.set_matrices_inner(proj, view);
+        }
+    }
+
+    unsafe fn set_matrices_inner(&self, proj: &Mat4, view: &Mat4) {
+        unsafe {
             sys::sceGumMatrixMode(MatrixMode::Projection);
             sys::sceGumLoadMatrix(&mat4_to_psp(proj));
             sys::sceGumMatrixMode(MatrixMode::View);
@@ -168,13 +206,24 @@ impl PspGfxBackend {
     }
 
     pub fn end_frame_and_swap(&mut self, wait_vblank: bool) {
+        let drawn_slot = self.frame_idx % 3;
         unsafe {
             sys::sceGuFinish();
             sys::sceGuSync(GuSyncMode::Finish, GuSyncBehavior::Wait);
             if wait_vblank {
                 sys::sceDisplayWaitVblankStart();
             }
-            sys::sceGuSwapBuffers();
+            // Explicit triple-buffer scanout matching `draw_slot` (fixes 2-buffer `sceGuSwapBuffers` drift).
+            let _ = sys::sceDisplaySetFrameBuf(
+                self.fb_abs_ptr(drawn_slot) as *const u8,
+                PSP_BUF_WIDTH,
+                DisplayPixelFormat::Psm5650,
+                if wait_vblank {
+                    DisplaySetBufSync::NextFrame
+                } else {
+                    DisplaySetBufSync::Immediate
+                },
+            );
         }
         self.frame_idx += 1;
     }
@@ -197,9 +246,18 @@ impl PspGfxBackend {
 
     fn alloc_in_tex(&mut self, bytes: usize) -> Option<*mut u8> {
         let aligned = (self.tex_cursor + 63) & !63;
-        let end = aligned + bytes;
+        let mut end = aligned + bytes;
         if end > TEX_CACHE_OFFSET + TEX_CACHE_BYTES {
-            return None;
+            if bytes > TEX_CACHE_BYTES {
+                return None;
+            }
+            // Flush TMU and recycle texture cache cleanly rather than dropping textures
+            unsafe { sys::sceGuTexFlush() };
+            self.textures.clear();
+            self.tex_cursor = TEX_CACHE_OFFSET;
+            end = TEX_CACHE_OFFSET + bytes;
+            self.tex_cursor = end;
+            return Some(unsafe { self.pool_base.add(TEX_CACHE_OFFSET) });
         }
         self.tex_cursor = end;
         Some(unsafe { self.pool_base.add(aligned) })
@@ -226,23 +284,105 @@ impl PspGfxBackend {
             _ => TexturePixelFormat::Psm8888,
         }
     }
+
+    fn bind_cached_tex(&self, existing: &CachedTexture) {
+        unsafe {
+            sys::sceGuTexMode(existing.psm, 0, 0, existing.swizzled);
+            sys::sceGuTexImage(
+                MipmapLevel::None,
+                existing.width,
+                existing.height,
+                existing.width,
+                existing.ptr as *const c_void,
+            );
+            sys::sceGuTexFunc(TextureEffect::Modulate, TextureColorComponent::Rgba);
+            sys::sceGuTexFilter(TextureFilter::Linear, TextureFilter::Linear);
+            sys::sceGuTexFlush();
+        }
+    }
 }
 
 impl GfxBackend for PspGfxBackend {
-    fn bind_texture(&mut self, tex_id: ResourceId, hdr: &PmmTexHeader, payload: &[u8]) -> bool {
-        if let Some(existing) = self.textures.iter().find(|t| t.id == tex_id) {
-            unsafe {
-                sys::sceGuTexMode(existing.psm, 0, 0, existing.swizzled);
-                sys::sceGuTexImage(
-                    MipmapLevel::None,
-                    existing.width,
-                    existing.height,
-                    existing.width,
-                    existing.ptr as *const c_void,
-                );
-                sys::sceGuTexFunc(TextureEffect::Modulate, TextureColorComponent::Rgba);
-                sys::sceGuTexFilter(TextureFilter::Linear, TextureFilter::Linear);
+    fn set_texture_enabled(&mut self, enabled: bool) {
+        unsafe {
+            if enabled {
+                sys::sceGuEnable(GuState::Texture2D);
+            } else {
+                sys::sceGuDisable(GuState::Texture2D);
             }
+        }
+    }
+
+    fn set_tex_sampler(&mut self, clamp_s: bool, clamp_t: bool, nearest: bool) {
+        let u = if clamp_s { GuTexWrapMode::Clamp } else { GuTexWrapMode::Repeat };
+        let v = if clamp_t { GuTexWrapMode::Clamp } else { GuTexWrapMode::Repeat };
+        let min_f = if nearest { TextureFilter::Nearest } else { TextureFilter::Linear };
+        let mag_f = if nearest { TextureFilter::Nearest } else { TextureFilter::Linear };
+        unsafe {
+            sys::sceGuTexWrap(u, v);
+            sys::sceGuTexFilter(min_f, mag_f);
+        }
+    }
+
+    fn set_cull_mode(&mut self, cull_back: bool, cull_front: bool) {
+        unsafe {
+            if cull_front && !cull_back {
+                sys::sceGuFrontFace(FrontFaceDirection::Clockwise);
+                sys::sceGuEnable(GuState::CullFace);
+            } else if cull_back {
+                sys::sceGuFrontFace(FrontFaceDirection::CounterClockwise);
+                sys::sceGuEnable(GuState::CullFace);
+            } else {
+                sys::sceGuDisable(GuState::CullFace);
+            }
+        }
+    }
+
+    fn set_prim_env_tint(&mut self, tint_abgr: u32) {
+        unsafe {
+            sys::sceGuTexEnvColor(tint_abgr);
+        }
+    }
+
+    fn set_scissor(&mut self, x0: i32, y0: i32, x1: i32, y1: i32) {
+        let sx0 = x0.clamp(0, PSP_SCREEN_WIDTH as i32);
+        let sy0 = y0.clamp(0, PSP_SCREEN_HEIGHT as i32);
+        let sx1 = x1.clamp(sx0, PSP_SCREEN_WIDTH as i32);
+        let sy1 = y1.clamp(sy0, PSP_SCREEN_HEIGHT as i32);
+        unsafe {
+            sys::sceGuScissor(sx0, sy0, sx1, sy1);
+            sys::sceGuEnable(GuState::ScissorTest);
+        }
+    }
+
+    fn upload_rgba8888_texture(&mut self, tex_key: u64, w: u16, h: u16, rgba: &[u8]) -> bool {
+        if let Some(existing) = self.textures.iter().find(|t| t.key == tex_key) {
+            self.bind_cached_tex(existing);
+            return false;
+        }
+        let Some(dst) = self.alloc_in_tex(rgba.len()) else {
+            return false;
+        };
+        unsafe {
+            ptr::copy_nonoverlapping(rgba.as_ptr(), dst, rgba.len());
+            sceKernelDcacheWritebackInvalidateRange(dst as *const c_void, rgba.len() as u32);
+        }
+        let cached = CachedTexture {
+            key: tex_key,
+            ptr: dst,
+            width: w as i32,
+            height: h as i32,
+            psm: TexturePixelFormat::Psm8888,
+            swizzled: 0,
+        };
+        self.bind_cached_tex(&cached);
+        self.textures.push(cached);
+        true
+    }
+
+    fn bind_texture(&mut self, tex_id: ResourceId, hdr: &PmmTexHeader, payload: &[u8]) -> bool {
+        if let Some(existing) = self.textures.iter().find(|t| t.key == tex_id.0) {
+            self.bind_cached_tex(existing);
             return false;
         }
 
@@ -260,21 +400,16 @@ impl GfxBackend for PspGfxBackend {
         let w = hdr.width as i32;
         let h = hdr.height as i32;
 
-        unsafe {
-            sys::sceGuTexMode(psm, 0, 0, swizzled);
-            sys::sceGuTexImage(MipmapLevel::None, w, h, w, dst as *const c_void);
-            sys::sceGuTexFunc(TextureEffect::Modulate, TextureColorComponent::Rgba);
-            sys::sceGuTexFilter(TextureFilter::Linear, TextureFilter::Linear);
-        }
-
-        self.textures.push(CachedTexture {
-            id: tex_id,
+        let cached = CachedTexture {
+            key: tex_id.0,
             ptr: dst,
             width: w,
             height: h,
             psm,
             swizzled,
-        });
+        };
+        self.bind_cached_tex(&cached);
+        self.textures.push(cached);
         true
     }
 
@@ -282,11 +417,13 @@ impl GfxBackend for PspGfxBackend {
         unsafe {
             if mode.test {
                 sys::sceGuEnable(GuState::DepthTest);
+                sys::sceGuDepthFunc(DepthFunc::GreaterOrEqual);
             } else {
                 sys::sceGuDisable(GuState::DepthTest);
             }
+            // PSP GE: `0` = depth writes enabled, `1` = depth writes masked/disabled
             sys::sceGuDepthMask(if mode.write { 0 } else { 1 });
-            sys::sceGuDepthOffset(mode.bias);
+            sys::sceGuDepthOffset(mode.bias * 16);
         }
     }
 
@@ -358,12 +495,15 @@ impl GfxBackend for PspGfxBackend {
     }
 
     fn begin_compile_static_list(&mut self, _list_id: u64) -> bool {
+        const CMD_RESERVE: usize = 64 * 1024;
         let aligned = (self.static_cursor + 63) & !63;
-        if aligned + 16 * 1024 > STATIC_CACHE_OFFSET + STATIC_CACHE_BYTES {
+        if aligned + CMD_RESERVE + 64 * 1024 > STATIC_CACHE_OFFSET + STATIC_CACHE_BYTES {
             return false;
         }
         let ptr = unsafe { self.pool_base.add(aligned) };
-        self.static_cursor = aligned;
+        // Advance `static_cursor` past the reserved 64 KiB command buffer so vertices
+        // written via `alloc_in_static` never overlap the active GE Call list!
+        self.static_cursor = aligned + CMD_RESERVE;
         self.compiling_list_start = Some(ptr);
         unsafe {
             sys::sceGuStart(GuContextType::Call, ptr as *mut c_void);
@@ -376,10 +516,9 @@ impl GfxBackend for PspGfxBackend {
             return;
         };
         let written = unsafe { sys::sceGuFinish() }.max(0) as usize;
-        let aligned_end = (self.static_cursor + written + 63) & !63;
-        self.static_cursor = aligned_end.min(STATIC_CACHE_OFFSET + STATIC_CACHE_BYTES);
+        let clamped_written = written.min(64 * 1024);
         unsafe {
-            sceKernelDcacheWritebackInvalidateRange(start as *const c_void, written as u32);
+            sceKernelDcacheWritebackInvalidateRange(start as *const c_void, clamped_written as u32);
         }
         self.static_lists.push(CachedStaticList {
             id: list_id,

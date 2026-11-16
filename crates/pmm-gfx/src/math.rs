@@ -150,6 +150,67 @@ pub fn mat4_lerp(prev: &Mat4, curr: &Mat4, fraction: f32) -> Mat4 {
     mat4_lerp_vfpu(prev, curr, fraction)
 }
 
+/// Column-major orthographic projection matching PSP GUM `ScePspFMatrix4` (`m[col][row]`).
+pub fn mat4_ortho(left: f32, right: f32, bottom: f32, top: f32, near: f32, far: f32) -> Mat4 {
+    let mut m = [[0.0f32; 4]; 4];
+    m[0][0] = 2.0 / (right - left);
+    m[1][1] = 2.0 / (top - bottom);
+    m[2][2] = -2.0 / (far - near);
+    m[3][0] = -(right + left) / (right - left);
+    m[3][1] = -(top + bottom) / (top - bottom);
+    m[3][2] = -(far + near) / (far - near);
+    m[3][3] = 1.0;
+    m
+}
+
+/// OpenGL/PSP GUM column-major perspective projection (`m[col][row]`).
+pub fn mat4_perspective(fovy_rad: f32, aspect: f32, near: f32, far: f32) -> Mat4 {
+    let f = 1.0 / libm::tanf(fovy_rad * 0.5);
+    let mut m = [[0.0f32; 4]; 4];
+    m[0][0] = f / aspect.max(0.1);
+    m[1][1] = f;
+    m[2][2] = (far + near) / (near - far);
+    m[2][3] = -1.0;
+    m[3][2] = (2.0 * far * near) / (near - far);
+    m
+}
+
+/// Column-major right-handed `LookAt` view matrix matching PSP GUM `ScePspFMatrix4`.
+pub fn mat4_look_at(eye: [f32; 3], at: [f32; 3], up: [f32; 3]) -> Mat4 {
+    let fx = at[0] - eye[0];
+    let fy = at[1] - eye[1];
+    let fz = at[2] - eye[2];
+    let fl = libm::sqrtf(fx * fx + fy * fy + fz * fz).max(1e-5);
+    let f = [fx / fl, fy / fl, fz / fl];
+
+    let sx = f[1] * up[2] - f[2] * up[1];
+    let sy = f[2] * up[0] - f[0] * up[2];
+    let sz = f[0] * up[1] - f[1] * up[0];
+    let sl = libm::sqrtf(sx * sx + sy * sy + sz * sz).max(1e-5);
+    let s = [sx / sl, sy / sl, sz / sl];
+
+    let u = [
+        s[1] * f[2] - s[2] * f[1],
+        s[2] * f[0] - s[0] * f[2],
+        s[0] * f[1] - s[1] * f[0],
+    ];
+
+    let mut m = mat4_identity();
+    m[0][0] = s[0];
+    m[1][0] = s[1];
+    m[2][0] = s[2];
+    m[0][1] = u[0];
+    m[1][1] = u[1];
+    m[2][1] = u[2];
+    m[0][2] = -f[0];
+    m[1][2] = -f[1];
+    m[2][2] = -f[2];
+    m[3][0] = -(s[0] * eye[0] + s[1] * eye[1] + s[2] * eye[2]);
+    m[3][1] = -(u[0] * eye[0] + u[1] * eye[1] + u[2] * eye[2]);
+    m[3][2] = f[0] * eye[0] + f[1] * eye[1] + f[2] * eye[2];
+    m
+}
+
 /// Software near-plane triangle clipper (`z <= -near` is in front of camera, i.e., `depth = -v.z >= near`).
 /// Returns `(emitted_vertices, triangle_count)` where `triangle_count` is `0`, `1` (3 verts), or `2` (6 verts).
 pub fn clip_triangle_near_plane(tri: [PspVertex; 3], near_depth: f32) -> ([PspVertex; 6], usize) {
