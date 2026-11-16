@@ -1,0 +1,129 @@
+======================================================================
+STAGE 0: REPOSITORY ROOT AUDIT AND SAFE BASELINE
+Date: 2026-11-16
+Auditor: Gemini Argon (Medium)
+Repository: /mnt/6421-8598/building/PocketMajora
+======================================================================
+
+1. VERIFIED GIT AND DIRECTORY STATE
+----------------------------------------------------------------------
+* Working Directory (pwd): /mnt/6421-8598/building/PocketMajora
+* Git Top-Level:           /mnt/6421-8598/building/PocketMajora
+* Active Branch:           main (tracking origin/main)
+* Verified HEAD SHA:       30b46acdc6dc09f7ca3eb0b46d6bc468581b4e3f
+                           ("Initial commit")
+* Remote origin:           https://github.com/RibhuNoodleBoodle/PocketMajora
+* Tracked Files at HEAD:
+  - LICENSE                (7,048 bytes, CC0 1.0 Universal)
+  - README.md              (66 bytes, "# PocketMajora ...")
+* Untracked Files/Directories at Session Start (`git status --short`):
+  - ?? Gemini_Argon_Medium_Rust_PSP3000_Master_Prompt.txt (18,936 bytes)
+  - ?? Gemini_Resume_Medium_PSP_Rust.txt                  (1,108 bytes)
+  - ?? handoff.txt                                        (6,597 bytes)
+  - ?? majora_code/                                       (directory)
+  - ?? psp_ref/                                           (directory)
+
+2. RECONCILIATION WITH HANDOFF / PROMPT ASSUMPTIONS
+----------------------------------------------------------------------
+* Assumption in seed handoff.txt / Master Prompt:
+  "The existing source code is already at the ROOT of the current Git
+  repository."
+* Actual Verified Disk Layout:
+  Instead of 2Ship2Harkinian files sitting directly in `/`, the root
+  contains two untracked source subdirectories placed by the owner:
+  1) `majora_code/` -- Snapshot of 2Ship2Harkinian (2S2H) v5.1.0
+     ("Beatrice Alfa", `project(2s2h VERSION 5.1.0 LANGUAGES C CXX)`).
+     - Contains `CMakeLists.txt`, `CMake/`, `mm/`, `docs/`, `Dockerfile`,
+       `.gitmodules`.
+     - File breakdown: 1,950 `.h`, 1,325 `.xml`, 963 `.c`, 533 `.cpp`,
+       130 `.png`, 23 `.rgba16`, 17 `.cmake`.
+     - Submodule directories `majora_code/libultraship`,
+       `majora_code/OTRExporter`, and `majora_code/ZAPDTR` are EMPTY
+       (no `.git` directory in `majora_code/`, submodules not populated).
+  2) `psp_ref/` -- Snapshot of `z2442/mm-PSP` (decomp-based C PSP port
+     using the shared `z2442/oot-PSP` backend updated through commit
+     `d4ad96c045d39e18a80f7a1f5d7f8fdba9621d38`, Nov 10, 2026).
+     - Contains `Makefile`, `Makefile.psp`, `psp.sh`, `docs/psp-port.md`,
+       `baseroms/`, `assets/`, `include/`, `src/` (`audio`, `boot`,
+       `buffers`, `code`, `dmadata`, `libultra`, `overlays`, `port`),
+       `tools/`, `linker_scripts/`.
+     - File breakdown: 1,072 `.c`, 1,033 `.h`, 826 `.xml`, 125 `.py`,
+       84 `.cpp`, 61 `.s`, 42 `.md`, 26 `.csv`.
+     - No `.git` directory inside `psp_ref/`.
+* Architectural Implication:
+  - Having `majora_code/` and `psp_ref/` in cleanly separated directories
+    at the repository root is ideal: root-level `Cargo.toml`, `src/`,
+    `crates/`, `tools/`, `docs/`, and `gemini_flash/` can live directly
+    at `/mnt/6421-8598/building/PocketMajora/` without colliding with
+    `majora_code/CMakeLists.txt` or `psp_ref/Makefile`.
+  - Neither `majora_code/` nor `psp_ref/` should be deleted or moved.
+  - Because `majora_code/ZAPDTR`, `majora_code/OTRExporter`, and
+    `majora_code/libultraship` are empty directories, any host asset
+    extraction or header inspection that depends on those submodules must
+    either populate them cleanly or use a self-contained Rust/Python
+    extraction pipeline verified in Stages 1-3.
+
+3. HOST ENVIRONMENT & TOOLCHAIN PROBE
+----------------------------------------------------------------------
+* OS: Linux
+* Rust Toolchain (`rustc`, `cargo`, `rustup`):
+  - NOT INSTALLED in `$PATH`, `~/.cargo/bin`, `/usr`, or `/opt`.
+  - Stage 1 / Flash Step 01 must include bootstrapping `rustup` + pinned
+    nightly toolchain + `rust-src` component + `cargo-psp`.
+* C PSP Toolchain (`psp-gcc` / `pspdev`):
+  - NOT INSTALLED on host.
+  - Pure-Rust PSP builds via `rust-psp` + `cargo-psp` use LLVM's built-in
+    MIPS backend (`mipsel-sony-psp`) and pure-Rust packing tools (`mksfo`,
+    `prxgen`, `pack-pbp`), so `pspdev` is NOT required unless C/C++ code
+    is compiled for PSP target.
+* PPSSPP Emulator:
+  - INSTALLED via Snap: `ppsspp-emulator` version 1.20.4 (rev 32) at
+    `/snap/bin/ppsspp-emulator` (user data in `/home/ribhu/snap/ppsspp-emulator`
+    and `/home/ribhu/.config/ppsspp`).
+* Real PSP-3000 Hardware:
+  - Not connected/mounted during audit; hardware testing remains UNTESTED
+    until owner executes generated `EBOOT.PBP` on physical PSP-3000.
+
+4. ROM STATUS AND LEGAL SEPARATION
+----------------------------------------------------------------------
+* Local ROM Search:
+  - Searched `/mnt/6421-8598` and `/home/ribhu` (up to depth 4) for
+    `*.z64`, `*.n64`, `*.v64`, `*.rom`, `*.otr`, `*.o2r`: NONE FOUND.
+  - Exact location, byte order, and hash of the owner's US ROM are
+    currently UNKNOWN.
+* Reference US ROM Signatures Documented in Tree:
+  - `majora_code/docs/supportedHashes.json`:
+    * NTSC-U 1.0 (decompressed): SHA-1 `d6133ace5afaa0882cf214cf88daba39e266c078`
+    * NTSC-U GC:                 SHA-1 `9743aa026e9269b339eb0e3044cd5830a440c1fd`
+  - `psp_ref/docs/psp-port.md` & `psp_ref/baseroms/n64-us/`:
+    * NTSC-U 1.0 (compressed 32 MiB `.z64`): CRC32 `B428D8A7`
+* Policy:
+  - Owner must provide or place the legal US ROM in an untracked/ignored
+    path before Step 03 (ROM validation & asset extraction).
+  - `.gitignore` at root must be created/updated by Flash in Step 01/02
+    to strictly exclude `*.z64`, `*.n64`, `*.v64`, `*.otr`, `*.o2r`,
+    `*.bin` asset packs, and build artifacts.
+
+5. STAGE 1 CONCRETE PLAN & ACTION PRIORITIES
+----------------------------------------------------------------------
+Priority 1 (Stage 1 -- Next Argon Session):
+  1. Research and compare `overdrivenpotato/rust-psp` (crates.io `psp` /
+     `cargo-psp`) vs `AndrewAltimit/rust-psp` (modernized nightly compatibility,
+     `MEMSIZE=1` / large heap support on PSP-2000/3000, GU/GUM bindings,
+     VFPU macros, panic/alloc handling).
+  2. Verify how `cargo-psp` sets `MEMSIZE=1` in `PARAM.SFO` (critical for
+     accessing the extra 32 MiB slim RAM on PSP-3000) and how user-mode
+     heap size is configured (`psp::enable_home_button!`, module info,
+     `sceKernelMaxFreeMemSize` / `sceKernelTotalFreeMemSize`).
+  3. Write `docs/research/01_rust_psp_toolchain.txt` with pinned repo URL,
+     commit SHA, nightly version, memory model findings, and PPSSPP CLI
+     invocation details for `/snap/bin/ppsspp-emulator`.
+  4. Write `gemini_flash/Gemini_Step_01.txt` instructing Flash to:
+     - Install/verify `rustup` and pinned nightly + `rust-src` + `cargo-psp`.
+     - Create root `.gitignore` and minimal root Rust PSP crate (`Cargo.toml`,
+       `src/main.rs`) that initializes PSP GU, renders a clear/colored test
+       frame, polls `sceCtrlReadBufferPositive`, queries and logs actual
+       free/max user RAM (`sceKernelTotalFreeMemSize`, `sceKernelMaxFreeMemSize`)
+       to `ms0:/PSP/GAME/POCKET_MM/boot_probe.log` (or host log via PPSSPP),
+       and builds `EBOOT.PBP`.
+======================================================================

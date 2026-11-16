@@ -1,0 +1,122 @@
+PROJECT HANDOFF -- OWNER-EDITABLE / RUST PSP-3000 MAJORA'S MASK
+Updated by: Gemini Argon (Medium), 2026-11-16 (STAGE 0 VERIFIED)
+This is a plain-text continuity record. Both Argon and Flash must READ it first.
+
+======================================================================
+REQUIREMENTS / ROLE CONTRACT
+======================================================================
+Goal: Native PSP-3000 homebrew of original US Majora's Mask using the
+2Ship2Harkinian source/conceptual foundation. RUST-FIRST game/runtime code.
+Source code ALREADY EXISTS IN REPOSITORY ROOT. No nested replacement checkout.
+Argon MEDIUM researches, audits, architects, writes numbered Flash prompts;
+Argon NEVER edits implementation or build code. Flash implements and tests.
+All major VERIFIED milestones get a REAL Git commit. Never auto-push.
+Prefer pinned repo-local dependencies. No copyrighted ROM/assets in Git.
+Other ports (mm-PSP/oot-PSP/zeldaret) are references, NOT a silent base swap.
+Master prompt: Gemini_Argon_Medium_Rust_PSP3000_Master_Prompt.txt
+Candidate worker folder: gemini_flash/Gemini_Step_XX.txt
+
+======================================================================
+CURRENT PROJECT STATE -- VERIFIED AT STAGE 0
+======================================================================
+CURRENT STAGE: 0 COMPLETED -> READY FOR STAGE 1 (RUST FEASIBILITY SPIKE)
+LAST COMPLETED: STAGE 0 -- ROOT AUDIT AND SAFE BASELINE (2026-11-16)
+LAST ATTEMPTED: STAGE 0 -- ROOT AUDIT AND SAFE BASELINE
+ACTIVE MODEL: Gemini Argon (Medium)
+REPOSITORY ROOT: /mnt/6421-8598/building/PocketMajora
+BRANCH / GIT HEAD: main (tracking origin/main) / baseline 30b46acdc6dc09f7ca3eb0b46d6bc468581b4e3f ("Initial commit")
+DIRTY / UNCOMMITTED FILES:
+  - Untracked source trees at root: `majora_code/` (2S2H v5.1.0), `psp_ref/` (z2442/mm-PSP)
+  - Untracked prompt files: `Gemini_Argon_Medium_Rust_PSP3000_Master_Prompt.txt`, `Gemini_Resume_Medium_PSP_Rust.txt`
+2SHIP2HARKINIAN BASELINE: Present at `/mnt/6421-8598/building/PocketMajora/majora_code/` (2S2H 5.1.0 "Beatrice Alfa"; note: submodule dirs `libultraship`, `OTRExporter`, `ZAPDTR` are empty; no `.git` inside `majora_code/`)
+PSP REFERENCE BASELINE: Present at `/mnt/6421-8598/building/PocketMajora/psp_ref/` (`z2442/mm-PSP` with `oot-PSP` shared backend `d4ad96c045d39e18a80f7a1f5d7f8fdba9621d38`, Nov 10, 2026; no `.git` inside `psp_ref/`)
+RUST PSP SDK SELECTED: NONE YET -- to be selected in Stage 1 (`AndrewAltimit/rust-psp` vs `overdrivenpotato/rust-psp`)
+RUST TOOLCHAIN PIN: NOT INSTALLED ON HOST YET (`rustc`/`cargo`/`rustup` absent; `psp-gcc` absent; `ppsspp-emulator` 1.20.4 snap installed at `/snap/bin/ppsspp-emulator`)
+ROM: NOT FOUND on `/mnt/6421-8598` or `/home/ribhu`; exact path/SHA-1/CRC32/byte-order UNKNOWN (supported US 1.0 hashes documented in `docs/research/00_root_audit.txt`)
+DEPENDENCIES / LICENSES: Root `LICENSE` is CC0-1.0; full dependency/license matrix queued for Stage 2-3
+ARCHITECTURE VERDICT: NOT DETERMINED (Scheduled for Stage 3)
+LATEST FLASH STEP: NONE (Step 01 to be authored in Stage 1)
+RESEARCH OUTPUTS:
+  - `docs/research/00_root_audit.txt` (verified Stage 0 audit)
+GIT COMMITS FOR THIS PROJECT:
+  - Base: `30b46acdc6dc09f7ca3eb0b46d6bc468581b4e3f` (Initial commit)
+  - Stage 0 planning milestone commit: committed with `docs/research/00_root_audit.txt` and `handoff.txt`
+BUILD (EBOOT.PBP): NOT RUN
+PPSSPP TEST: NOT RUN
+REAL PSP-3000 TEST: NOT RUN
+
+======================================================================
+BLOCKERS, UNCERTAINTIES, AND REAL RISKS
+======================================================================
+* Host lacks `rustup`/`cargo`/`rustc`; Flash Step 01 will need to bootstrap Rust nightly + `rust-src` + `cargo-psp`.
+* `majora_code/` is in a subdirectory of root rather than directly in `/`, and its `libultraship`, `OTRExporter`, and `ZAPDTR` submodule dirs are empty. Root `/` is clean for root-level `Cargo.toml` and `src/` while keeping `majora_code/` and `psp_ref/` intact.
+* 2Ship2Harkinian is C/C++ (963 `.c`, 533 `.cpp`, 1,950 `.h`); a Rust-first PSP native adaptation requires careful architectural scoping in Stages 2-3.
+* PSP-3000 has 64 MiB total RAM (`MEMSIZE=1` required in `PARAM.SFO` to unlock slim memory); user-mode free memory must be measured in Step 01.
+* Owner's US N64 ROM file path is not yet present/known on disk (needed by Step 03, not needed for Step 01 toolchain spike).
+
+======================================================================
+NEXT EXACT ACTION (FOR GEMINI ARGON MEDIUM)
+======================================================================
+Execute STAGE 1 ONLY: Research and compare `AndrewAltimit/rust-psp` vs `overdrivenpotato/rust-psp` (nightly pin, `cargo-psp`, `MEMSIZE=1` large memory support, GU/input/alloc/panic behavior, and PPSSPP execution). Write `docs/research/01_rust_psp_toolchain.txt` and `gemini_flash/Gemini_Step_01.txt` (minimal Rust EBOOT.PBP proof-of-toolchain + memory/GU/input probe). Update `handoff.txt`, commit Stage 1 planning docs, and STOP.
+
+======================================================================
+KNOWN TECHNICAL REFERENCES -- NOT IMPLEMENTATION PROOF
+======================================================================
+2Ship2Harkinian: https://github.com/2ship2harkinian/2ship2harkinian
+2S2H building: https://github.com/2ship2harkinian/2ship2harkinian/blob/develop/docs/BUILDING.md
+2S2H hashes: https://github.com/2ship2harkinian/2ship2harkinian/blob/develop/docs/supportedHashes.json
+Modernized Rust PSP SDK: https://github.com/AndrewAltimit/rust-psp
+Modernized Rust PSP docs: https://andrewaltimit.github.io/rust-psp/
+Original Rust PSP SDK: https://github.com/overdrivenpotato/rust-psp
+Reference MM PSP port: https://github.com/z2442/mm-PSP
+Reference MM PSP notes: https://github.com/z2442/mm-PSP/blob/main/docs/psp-port.md
+Reference OoT PSP port: https://github.com/z2442/oot-PSP
+Decomp: https://github.com/zeldaret/mm
+PPSSPP: https://www.ppsspp.org/docs/reference/command-line/
+
+======================================================================
+OWNER NOTES (YOU MAY EDIT THIS; MODELS MUST PRESERVE CONTENT)
+======================================================================
+OWNER PRIORITIES:
+- Keep token consumption low; use Gemini Argon Medium.
+- I may run out of tokens without warning; keep this file updated regularly.
+- Rust is the implementation language, not merely a Rust wrapper.
+- The codebase is at the current Git repository root.
+- Reference other attempts, but work toward the requested 2S2H-based port.
+- Commit every genuine major milestone.
+
+OWNER NEW INSTRUCTIONS / MANUAL OBSERVATIONS:
+[Add any new requirements, known paths, bugs, screenshots, or priorities here.]
+
+======================================================================
+AGENT CHECKPOINT (MODELS UPDATE THIS SECTION FREQUENTLY)
+======================================================================
+What just happened: Completed Stage 0 root audit (`docs/research/00_root_audit.txt`). Reconciled repo layout (`majora_code/` has 2S2H v5.1.0 with empty submodule dirs; `psp_ref/` has `z2442/mm-PSP`). Verified host lacks `rustc`/`cargo` and has `ppsspp-emulator` 1.20.4 via Snap.
+Last checked source path: /mnt/6421-8598/building/PocketMajora/{majora_code,psp_ref,docs/research/00_root_audit.txt}
+Last verified command / output: `git status --short --branch`, `git rev-parse HEAD` -> `30b46acdc6dc09f7ca3eb0b46d6bc468581b4e3f`
+Modified files since last commit: Added `docs/research/00_root_audit.txt` and updated `handoff.txt` (plus untracked `majora_code/`, `psp_ref/`, prompt `.txt` files).
+Potential work loss if session ends now: NONE (Stage 0 files written to disk and being committed).
+Exact next command/action: Owner replies `CONTINUE` to run Argon Stage 1 (`docs/research/01_rust_psp_toolchain.txt` + `gemini_flash/Gemini_Step_01.txt`).
+
+======================================================================
+APPEND-ONLY CHANGE LOG
+======================================================================
+2026-11-16 ChatGPT: Created Rust/Medium seed handoff. No repository access,
+             game source changes, PSP builds, emulator tests, or Git commits.
+2026-11-16 Gemini Argon (Medium): Completed Stage 0 Root Audit. Verified HEAD
+             `30b46ac`, audited `majora_code/` (2S2H 5.1.0, empty submodule
+             dirs) and `psp_ref/` (`z2442/mm-PSP` @ `d4ad96c0`), checked host
+             tools (`rustc` missing, Snap `ppsspp-emulator` 1.20.4 installed)
+             and ROM absence. Wrote `docs/research/00_root_audit.txt`.
+
+======================================================================
+RECOVERY RULES (IF ARGON OR FLASH FAILS / TOKENS EXPIRE)
+======================================================================
+1. Read handoff and owner's notes first, then ONLY relevant master/step file.
+2. Inspect real Git HEAD/status and files; distinguish evidence from text claims.
+3. Resume FIRST INCOMPLETE stage. Do not repeat confirmed code edits.
+4. If the file disagrees with real Git, preserve owner's notes and log the
+   discrepancy; never erase uncommitted work or run destructive Git commands.
+5. Preserve ROM privacy. Never assert PASS without actual reproducible logs.
+6. Update this file BEFORE lengthy work and after each useful result. Don't
+   promise it will auto-update at the exact moment token limits are reached.
