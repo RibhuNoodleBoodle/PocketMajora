@@ -1,0 +1,45 @@
+======================================================================
+STEP 04 VERIFICATION LOG -- PMM-ASSETS STREAMING LOADER & 20X RELOAD TEST
+Date: 2026-11-16
+Verifier: Gemini Hydrogen (High)
+Repository Root: /mnt/6421-8598/building/PocketMajora
+======================================================================
+
+1. HOST UNIT TESTS (`crates/pmm-assets`)
+----------------------------------------------------------------------
+Command:
+  `cargo test --manifest-path crates/pmm-assets/Cargo.toml --target x86_64-unknown-linux-gnu`
+Result:
+  `8 passed; 0 failed`
+  - `resource_mgr_lookup_hit_and_miss` ... ok
+  - `segment_table_disambiguation_and_oob` ... ok
+  - `suspend_close_and_resume_reopen_contract` ... ok
+  - `arena_scene_room_reset_zero_leak` ... ok
+  - `truncated_pak_negative_test` ... ok
+  - `arena_oom_negative_test` ... ok
+  - `bad_pak_magic_negative_test` ... ok
+  - `pinned_common_plus_20_scene_reload_cycles` ... ok
+
+2. PPSSPP SLIM (`PSPModel = 1`, `MEMSIZE=1`) EXECUTION (`./scripts/test_step04.sh`)
+----------------------------------------------------------------------
+Actual `step04_assets.log` written by `EBOOT.PBP`:
+```
+STATUS: PASS
+PAK_OPEN: OK(entries=9, version=1)
+COMMON_PINNED_BYTES: 9552
+RELOAD_CYCLES_COMPLETED: 20
+POOL2_USED_BEFORE_CYCLES: 0
+POOL2_USED_AFTER_20_CYCLES: 0
+KERNEL_FREE_MEM_DELTA_AFTER_20_CYCLES: 0
+PAYLOAD_16B_ALIGNED: true
+SEGMENT_TABLE_CHECK: true
+SUSPEND_RESUME_FD_REOPEN_READ: OK
+NEGATIVE_MISSING_RESOURCE_LOOKUP: EXPECTED_ERR_NOT_FOUND
+```
+Verification:
+- `EBOOT.PBP` opened `ms0:/PSP/GAME/PocketMajora/data/pmm_2s2h.pak` via chunked
+  16 KiB `sceIo*` reads, pinned common resources into Pool 1, ran 20 Scene+Room
+  reload cycles in Pool 2 with `0` bytes leaked in both Pool 2 and kernel RAM,
+  verified suspend/resume FD close + reopen, and handled missing resource lookup cleanly.
+- Real PSP-3000 hardware test: NOT RUN.
+======================================================================

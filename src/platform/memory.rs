@@ -1,4 +1,3 @@
-use core::slice;
 use psp::mem::{Partition2Alloc, alloc_user_bytes};
 
 pub const POOL_COMMON_BYTES: usize = 6 * 1024 * 1024;
@@ -54,69 +53,26 @@ impl PartitionPools {
         }
     }
 
+    /// Borrow the 6 MiB Common Assets pool as a bounded arena.
+    pub fn common_arena_mut(&mut self) -> pmm_assets::BoundedArena {
+        // SAFETY: `self.common_assets` exclusively owns `POOL_COMMON_BYTES` bytes.
+        unsafe {
+            pmm_assets::BoundedArena::from_raw_parts(
+                self.common_assets.as_mut_ptr(),
+                POOL_COMMON_BYTES,
+            )
+        }
+    }
+
     /// Borrow the 8 MiB Scene/Object pool as a deterministic bump/mark/reset arena.
-    pub fn scene_arena_mut(&mut self) -> SceneObjectArena<'_> {
-        let ptr = self.scene_object.as_mut_ptr();
+    pub fn scene_arena_mut(&mut self) -> pmm_assets::BoundedArena {
         // SAFETY: `self.scene_object` exclusively owns `POOL_SCENE_BYTES` bytes.
-        let slice = unsafe { slice::from_raw_parts_mut(ptr, POOL_SCENE_BYTES) };
-        SceneObjectArena::new(slice)
-    }
-}
-
-/// Scoped bump arena with nested Scene & Room reset markers (0 fragmentation).
-pub struct SceneObjectArena<'a> {
-    buf: &'a mut [u8],
-    offset: usize,
-    scene_mark: usize,
-    room_mark: usize,
-}
-
-impl<'a> SceneObjectArena<'a> {
-    pub fn new(buf: &'a mut [u8]) -> Self {
-        Self {
-            buf,
-            offset: 0,
-            scene_mark: 0,
-            room_mark: 0,
+        unsafe {
+            pmm_assets::BoundedArena::from_raw_parts(
+                self.scene_object.as_mut_ptr(),
+                POOL_SCENE_BYTES,
+            )
         }
-    }
-
-    pub fn mark_scene(&mut self) {
-        self.scene_mark = self.offset;
-        self.room_mark = self.offset;
-    }
-
-    pub fn reset_to_scene(&mut self) {
-        self.offset = self.scene_mark;
-        self.room_mark = self.scene_mark;
-    }
-
-    pub fn mark_room(&mut self) {
-        self.room_mark = self.offset;
-    }
-
-    pub fn reset_to_room(&mut self) {
-        self.offset = self.room_mark;
-    }
-
-    pub fn used_bytes(&self) -> usize {
-        self.offset
-    }
-
-    pub fn alloc_aligned(&mut self, size: usize, align: usize) -> Option<&mut [u8]> {
-        let align = align.max(16);
-        debug_assert!(align.is_power_of_two());
-        let base = self.buf.as_ptr() as usize;
-        let cur_addr = base + self.offset;
-        let aligned_addr = (cur_addr + align - 1) & !(align - 1);
-        let pad = aligned_addr - cur_addr;
-        let new_off = self.offset.checked_add(pad)?.checked_add(size)?;
-        if new_off > self.buf.len() {
-            return None;
-        }
-        let start = self.offset + pad;
-        self.offset = new_off;
-        Some(&mut self.buf[start..new_off])
     }
 }
 

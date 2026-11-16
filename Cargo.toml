@@ -3,6 +3,7 @@ resolver = "2"
 members = [
     ".",
     "crates/pmm-schema",
+    "crates/pmm-assets",
     "tools/pmm-extractor",
 ]
 exclude = ["tools/rust-psp"]
@@ -25,6 +26,7 @@ edition = "2024"
 [dependencies]
 psp = { path = "tools/rust-psp/psp" }
 pmm-schema = { path = "crates/pmm-schema" }
+pmm-assets = { path = "crates/pmm-assets" }
 
 [patch.crates-io]
 unicode-width = { git = "https://git.sr.ht/~sajattack/unicode-width" }
