@@ -77,6 +77,10 @@ dependencies = [
 ]
 
 [[package]]
+name = "pmm-audio"
+version = "0.1.0"
+
+[[package]]
 name = "pmm-extractor"
 version = "0.1.0"
 dependencies = [
@@ -111,6 +115,7 @@ version = "0.1.0"
 dependencies = [
  "libm",
  "pmm-assets",
+ "pmm-audio",
  "pmm-game",
  "pmm-gfx",
  "pmm-schema",

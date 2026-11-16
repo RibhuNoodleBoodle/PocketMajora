@@ -19,12 +19,12 @@ Candidate worker folder: gemini_flash/Gemini_Step_XX.txt
 ======================================================================
 CURRENT PROJECT STATE -- VERIFIED AT STAGE 4
 ======================================================================
-CURRENT STAGE: STEP 06 PASS -> STARTING STEP 07
-LAST COMPLETED: STEP 06 -- 40 FPS INTERPOLATED RENDER + 20 HZ GRAPH, PADMGR, 128K FLASHROM (2026-11-16)
-LAST ATTEMPTED: STEP 06 -- 40 FPS (25 MS) INTERPOLATED RENDER + 20 HZ GRAPH, PADMGR, FLASHROM (PASS)
+CURRENT STAGE: STEP 07 PASS -> STARTING STEP 08
+LAST COMPLETED: STEP 07 -- 32 KHZ AUDIO SYNTHESIZER & POWER SUSPEND/RESUME (2026-11-16)
+LAST ATTEMPTED: STEP 07 -- 32 KHZ AUDIO SYNTHESIZER & POWER SUSPEND/RESUME + HOME LIFECYCLE (PASS)
 ACTIVE MODEL: Gemini Hydrogen (High)
 REPOSITORY ROOT: /mnt/6421-8598/building/PocketMajora
-BRANCH / GIT HEAD: main (tracking origin/main) / prior commit fc91487341dc7bf934ffd7131ad473d999a657a8
+BRANCH / GIT HEAD: main (tracking origin/main) / prior commit c7d9ac733a3a895a430d1b0b3f15804debf694d0
 DIRTY / UNCOMMITTED FILES:
   - Untracked source trees at root: `majora_code/` (2S2H v5.1.0), `psp_ref/` (z2442/mm-PSP)
   - Untracked prompt files: `Gemini_Argon_Medium_Rust_PSP3000_Master_Prompt.txt`, `Gemini_Resume_Medium_PSP_Rust.txt`
@@ -32,7 +32,7 @@ DIRTY / UNCOMMITTED FILES:
 PSP REFERENCE BASELINE: Present at `/mnt/6421-8598/building/PocketMajora/psp_ref/` (`z2442/mm-PSP` with `oot-PSP` shared backend `d4ad96c045d39e18a80f7a1f5d7f8fdba9621d38`, Nov 10, 2026; no root OSS license covering `src/port/psp/**` -> clean-room technical reference only)
 RUST PSP SDK SELECTED: `AndrewAltimit/rust-psp` pinned at commit `e4cc06f6fa50fa45dc3ae8b332e8a2b67625f588` (MIT, Edition 2024, 8 MiB userspace arena + >=256 KiB kernel-block bypass, `no_std` + `alloc`)
 RUST TOOLCHAIN PIN: `nightly-2026-04-13` with `components = ["rust-src"]` (to be bootstrapped by Flash in Step 01)
-ROM: NOT FOUND on `/mnt/6421-8598` or `/home/ribhu`; target US 1.0 ROM is 32 MiB compressed CRC32 `0xB428D8A7` / decompressed SHA-1 `d6133ace5afaa0882cf214cf88daba39e266c078` (Step 03 includes both real US ROM extraction and a ROM-less synthetic test pack generator so builds/tests never stall)
+ROM: PRESENT AT ROOT (`Legend of Zelda, The - Majora's Mask (USA).z64`, untracked/ignored): `Z64`, 33,554,432 bytes (32 MiB), game_id=`NZSE`, title=`ZELDA MAJORA'S MASK`, CRC32 `0xb428d8a7`, SHA-1 `d6133ace5afaa0882cf214cf88daba39e266c078`. Extracted untracked `data/pmm_2s2h.pak` (`46,566,304` bytes, `1,535` Yaz0/raw segments, `22,634` N64_US XML decls).
 DEPENDENCIES / LICENSES: Documented in `docs/architecture/DEPENDENCIES_AND_LICENSES.txt` (Root & `majora_code/` CC0-1.0; `AndrewAltimit/rust-psp` MIT; `psp_ref/src/port/psp/**` clean-room reference only).
 ARCHITECTURE VERDICT: **CONDITIONAL GO** (`docs/architecture/FEASIBILITY_GATE.txt`). Route A selected: root Cargo workspace (`pocket-majora` + `crates/pmm-{schema,assets,gfx,audio,game}` + host `tools/pmm-extractor`), 40.0 MiB User DRAM / 2.0 MiB VRAM quantitative budgets, **40.0 FPS (`<= 25.0 ms` latency) matrix-interpolated presentation (`fraction = 0.5` & `1.0`) running on top of authentic 20.0 Hz N64 game logic** (`docs/architecture/PSP_RUST_ARCHITECTURE.txt`).
 LATEST FLASH STEP: ALL 10 STEPS AUTHORED (`gemini_flash/Gemini_Step_01.txt` .. `gemini_flash/Gemini_Step_10.txt`; start with `Gemini_Step_01.txt`; see `gemini_flash/INDEX.txt`)
@@ -104,12 +104,12 @@ OWNER NEW INSTRUCTIONS / MANUAL OBSERVATIONS:
 ======================================================================
 AGENT CHECKPOINT (MODELS UPDATE THIS SECTION FREQUENTLY)
 ======================================================================
-What just happened: Completed Step 06 (`PASS`). Implemented `crates/pmm-game` (`FrameInterpolator`, `TwoHeadGfxArena`, `NoCatchUpPacer`, `PadMgr`, `SaveContext`, `SysFlashrom`) + `src/platform/flashrom_psp.rs`. Passed 12/12 host tests and PPSSPP Slim 120-tick / 240-frame 40 FPS run (`AVG_FRAME_LATENCY_US: 24999`, `mm-psp-save.bin` 128 KiB `ZELDA3` verified) (`docs/research/06_step06_verification_log.txt`).
-Last checked source path: /mnt/6421-8598/building/PocketMajora/docs/research/06_step06_verification_log.txt
-Last verified command / output: `./scripts/test_step06.sh` -> `12 passed`, `STATUS: PASS`, `AVG_FRAME_LATENCY_US: 24999`, `FLASHROM_FILE_SIZE_BYTES: 131072`.
-Modified files since last commit: `Cargo.toml`, `Cargo.lock`, `crates/pmm-game/*`, `src/platform/*`, `src/main.rs`, `scripts/test_step06.sh`, `docs/research/06_step06_verification_log.txt`, `gemini_flash/INDEX.txt`, `handoff.txt`.
-Potential work loss if session ends now: NONE (committing Step 06 now).
-Exact next command/action: Execute `gemini_flash/Gemini_Step_07.txt` (`crates/pmm-audio`: 32 kHz VADPCM/envmixer synthesizer + coordinated power suspend/resume & HOME callbacks).
+What just happened: Completed Step 07 (`PASS`). Implemented `crates/pmm-audio` (8/8 host tests: VADPCM, ADSR envmixer, 32->44.1 kHz resampler, Seq/SFX), `src/platform/audio_psp.rs`, and `src/platform/power.rs`. Verified in PPSSPP Slim with real 46.5 MB US Majora's Mask `data/pmm_2s2h.pak` (`32 -> 58` hardware audio buffers, peak `9220`, suspend/resume FD & RTC clamp OK) (`docs/research/07_step07_verification_log.txt`).
+Last checked source path: /mnt/6421-8598/building/PocketMajora/docs/research/07_step07_verification_log.txt
+Last verified command / output: `./scripts/test_step07.sh` -> `8 passed`, `STATUS: PASS`, `AUDIO_BUFFERS_AFTER_RESUME: 58`.
+Modified files since last commit: `Cargo.toml`, `Cargo.lock`, `tools/pmm-extractor/src/main.rs`, `crates/pmm-audio/*`, `src/platform/*`, `src/main.rs`, `scripts/test_step07.sh`, `docs/research/07_step07_verification_log.txt`, `gemini_flash/INDEX.txt`, `handoff.txt`.
+Potential work loss if session ends now: NONE (committing Step 07 now).
+Exact next command/action: Execute `gemini_flash/Gemini_Step_08.txt` (`ovl_title`, `ovl_file_choose` 3-slot save/copy/erase, `ovl_daytelop`).
 
 ======================================================================
 APPEND-ONLY CHANGE LOG
@@ -177,6 +177,11 @@ APPEND-ONLY CHANGE LOG
              Verified 120-tick 20 Hz logic + 240-frame 40 FPS (`24,999 us` avg
              latency) presentation, 117 interpolated blends, and 128 KiB
              `mm-psp-save.bin` async save/reload (`06_step06_verification_log.txt`).
+2026-11-16 Gemini Hydrogen (High): Verified user US 1.0 ROM (`CRC32 0xb428d8a7`,
+             `SHA-1 d6133ace...`) and extracted real `data/pmm_2s2h.pak` (46.5 MB,
+             1,535 named segments). Completed Step 07 (`PASS`): `crates/pmm-audio`
+             (8/8 host tests), PSP 32 kHz audio worker (`32 -> 58` buffers, peak
+             `9220`), and coordinated suspend/resume (`07_step07_verification_log.txt`).
 
 ======================================================================
 RECOVERY RULES (IF ARGON OR FLASH FAILS / TOKENS EXPIRE)

@@ -120,9 +120,14 @@ fn main() {
             });
 
             // Decompress dmadata segments into virtual ROM segments table
+            let filelist_path = xml_dir.join("../../extractor/filelists/mm.txt");
+            let filelist: Vec<String> = fs::read_to_string(&filelist_path)
+                .map(|s| s.lines().map(|l| l.trim().to_string()).collect())
+                .unwrap_or_default();
+
             let mut builder = pak::PakBuilder::new(report.crc32);
             let mut decompressed_segments = 0usize;
-            for entry in &dma {
+            for (idx, entry) in dma.iter().enumerate() {
                 let is_compressed = entry.rom_end != 0;
                 let data = if is_compressed {
                     let s = entry.rom_start as usize;
@@ -143,8 +148,12 @@ fn main() {
                 };
                 if !data.is_empty() {
                     decompressed_segments += 1;
-                    let seg_key = format!("__OTR__vrom/{:#010x}", entry.vrom_start);
-                    builder.push_path(&seg_key, fourcc::OARR, 0, data);
+                    let key = if let Some(name) = filelist.get(idx).filter(|n| !n.is_empty()) {
+                        format!("__OTR__seg/{name}")
+                    } else {
+                        format!("__OTR__vrom/{:#010x}", entry.vrom_start)
+                    };
+                    builder.push_path(&key, fourcc::OROM, 0, data);
                 }
             }
             let manifest = format!(
