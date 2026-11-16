@@ -249,6 +249,17 @@ impl<F: FlashIo> SysFlashrom<F> {
         self.write_async(&bytes, page, 64)
     }
 
+    pub fn erase_save_slot(&mut self, slot: usize) -> i32 {
+        if slot >= 3 {
+            return -1;
+        }
+        let blank = [0xFFu8; SAVE_SLOT_SIZE];
+        let page = (slot as u32) * 64;
+        let backup_page = ((slot + 3) as u32) * 64;
+        let _ = self.write_sync(&blank, backup_page, 64);
+        self.write_async(&blank, page, 64)
+    }
+
     pub fn read_save_slot(&self, slot: usize) -> Option<SaveContext> {
         if slot >= 3 {
             return None;
@@ -271,6 +282,13 @@ impl<F: FlashIo> SysFlashrom<F> {
     pub fn corrupt_primary_slot_for_test(&mut self, slot: usize) {
         if slot < 3 {
             let off = slot * SAVE_SLOT_SIZE;
+            self.data[off + SAVE_SLOT_SIZE - 1] ^= 0xFF;
+        }
+    }
+
+    pub fn corrupt_backup_slot_for_test(&mut self, slot: usize) {
+        if slot < 3 {
+            let off = (slot + 3) * SAVE_SLOT_SIZE;
             self.data[off + SAVE_SLOT_SIZE - 1] ^= 0xFF;
         }
     }

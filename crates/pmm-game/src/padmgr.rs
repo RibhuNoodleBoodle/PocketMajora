@@ -47,6 +47,18 @@ pub struct PadInput {
     pub stick_y: i8,
 }
 
+impl PadInput {
+    #[inline]
+    pub const fn pressed(&self, mask: u32) -> bool {
+        (self.press_buttons & mask) != 0
+    }
+
+    #[inline]
+    pub const fn held(&self, mask: u32) -> bool {
+        (self.cur_buttons & mask) != 0
+    }
+}
+
 #[derive(Default)]
 pub struct PadMgr {
     prev_buttons: u32,

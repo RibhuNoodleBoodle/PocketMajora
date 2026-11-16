@@ -1,0 +1,26 @@
+STEP 08 VERIFICATION LOG — INTERACTIVE TITLE SCREEN, FILE SELECT, AND DAY TELOP
+Date: 2026-11-16
+
+1. Host Unit Tests:
+   Command: `cargo test -p pmm-schema -p pmm-assets -p pmm-gfx -p pmm-audio -p pmm-game -p pmm-extractor --target x86_64-unknown-linux-gnu`
+   Result: ALL PASSED (pmm-assets 8/8, pmm-audio 8/8, pmm-extractor 10/10, pmm-game 16/16 [including 4 new Step 08 tests], pmm-gfx 10/10, pmm-schema 6/6) -> 0 failed.
+
+2. PPSSPP Slim Soak Output (`step08_title_fileselect.log` via `./scripts/test_step08.sh`):
+   OTR_MESSAGE_DATA_STATIC: loaded=true, bytes=432624, entries=4589
+   STATE_01: TitleSetup -> ConsoleLogo
+   STATE_02: ConsoleLogo rendered frames=98, alpha_fade=OK -> FileSelect
+   FILESELECT_CREATE_SLOT0: OK(name="Link", hearts=0x30, time=0x4000, wait_ticks=40)
+   FILESELECT_COPY_SLOT0_TO_SLOT1: OK
+   FILESELECT_ERASE_SLOT1: OK(slot1_valid=false)
+   NEGATIVE_CORRUPT_SLOT2_RECOVERY: OK(fallback_or_invalid_handled)
+   FILESELECT_LAUNCH_SLOT0: OK -> DayTelop("Dawn of the First Day")
+   FRAMES_RENDERED_TOTAL: 424
+   AVG_FRAME_LATENCY_US: 25000
+   THGA_POOL_CANARIES_INTACT: true
+   STATUS: PASS
+
+3. Notes:
+   - Real US MM `__OTR__seg/message_data_static` (432,624 bytes, 4,589 `0xBF` message entries) loaded cleanly from `data/pmm_2s2h.pak`.
+   - Verified full state chain: TitleSetup -> ConsoleLogo (`ovl_title` fade-in/hold/START-skip/fade-out) -> FileSelect (3-slot `SysFlashrom` + `PspFlashIo` `mm-psp-save.bin` create/40-tick async wait/copy/erase/corrupt-recovery/launch) -> DayTelop ("Dawn of the First Day").
+   - Verified 40 FPS presentation (424 rendered frames, `AVG_FRAME_LATENCY_US: 25000`, F3DEX2 quads emitted through `pmm-gfx` -> `PspGfxBackend` -> GU framebuffer).
+   - REAL PSP-3000 HARDWARE TEST: NOT YET RUN (verified in PPSSPP Slim emulator only).

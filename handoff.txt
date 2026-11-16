@@ -19,12 +19,12 @@ Candidate worker folder: gemini_flash/Gemini_Step_XX.txt
 ======================================================================
 CURRENT PROJECT STATE -- VERIFIED AT STAGE 4
 ======================================================================
-CURRENT STAGE: STEP 07 PASS -> STARTING STEP 08
-LAST COMPLETED: STEP 07 -- 32 KHZ AUDIO SYNTHESIZER & POWER SUSPEND/RESUME (2026-11-16)
-LAST ATTEMPTED: STEP 07 -- 32 KHZ AUDIO SYNTHESIZER & POWER SUSPEND/RESUME + HOME LIFECYCLE (PASS)
+CURRENT STAGE: STEP 08 PASS -> STEP 09 IN PROGRESS (CLOCK TOWN VERTICAL SLICE & 3-DAY CLOCK)
+LAST COMPLETED: STEP 08 -- INTERACTIVE TITLE SCREEN, FILE SELECT 3-SLOT FLASHROM SAVE/COPY/ERASE, DAYTELOP (PASS)
+LAST ATTEMPTED: STEP 09 -- PLAYABLE CLOCK TOWN VERTICAL SLICE + 3-DAY CLOCK & HUD (STARTING)
 ACTIVE MODEL: Gemini Hydrogen (High)
 REPOSITORY ROOT: /mnt/6421-8598/building/PocketMajora
-BRANCH / GIT HEAD: main (tracking origin/main) / prior commit c7d9ac733a3a895a430d1b0b3f15804debf694d0
+BRANCH / GIT HEAD: main (tracking origin/main) / verified HEAD 6efdea8b098807016f6f2a379f57355547a28349
 DIRTY / UNCOMMITTED FILES:
   - Untracked source trees at root: `majora_code/` (2S2H v5.1.0), `psp_ref/` (z2442/mm-PSP)
   - Untracked prompt files: `Gemini_Argon_Medium_Rust_PSP3000_Master_Prompt.txt`, `Gemini_Resume_Medium_PSP_Rust.txt`
@@ -104,12 +104,12 @@ OWNER NEW INSTRUCTIONS / MANUAL OBSERVATIONS:
 ======================================================================
 AGENT CHECKPOINT (MODELS UPDATE THIS SECTION FREQUENTLY)
 ======================================================================
-What just happened: Completed Step 07 (`PASS`). Implemented `crates/pmm-audio` (8/8 host tests: VADPCM, ADSR envmixer, 32->44.1 kHz resampler, Seq/SFX), `src/platform/audio_psp.rs`, and `src/platform/power.rs`. Verified in PPSSPP Slim with real 46.5 MB US Majora's Mask `data/pmm_2s2h.pak` (`32 -> 58` hardware audio buffers, peak `9220`, suspend/resume FD & RTC clamp OK) (`docs/research/07_step07_verification_log.txt`).
-Last checked source path: /mnt/6421-8598/building/PocketMajora/docs/research/07_step07_verification_log.txt
-Last verified command / output: `./scripts/test_step07.sh` -> `8 passed`, `STATUS: PASS`, `AUDIO_BUFFERS_AFTER_RESUME: 58`.
-Modified files since last commit: `Cargo.toml`, `Cargo.lock`, `tools/pmm-extractor/src/main.rs`, `crates/pmm-audio/*`, `src/platform/*`, `src/main.rs`, `scripts/test_step07.sh`, `docs/research/07_step07_verification_log.txt`, `gemini_flash/INDEX.txt`, `handoff.txt`.
-Potential work loss if session ends now: NONE (committing Step 07 now).
-Exact next command/action: Execute `gemini_flash/Gemini_Step_08.txt` (`ovl_title`, `ovl_file_choose` 3-slot save/copy/erase, `ovl_daytelop`).
+What just happened: Started Step 08 (`gemini_flash/Gemini_Step_08.txt`). Implementing `TitleSetupState`, `ConsoleLogoState` (`ovl_title`), `FileSelectState` (`ovl_file_choose` 3-slot save/copy/erase/options + 40-tick Flashrom deadline), `DayTelopState`, and `ScriptedPadInjector` in `crates/pmm-game`.
+Last checked source path: /mnt/6421-8598/building/PocketMajora/gemini_flash/Gemini_Step_08.txt
+Last verified command / output: `git rev-parse HEAD` -> `6efdea8b098807016f6f2a379f57355547a28349`
+Modified files since last commit: `handoff.txt` (Step 08 in progress).
+Potential work loss if session ends now: Step 08 implementation started.
+Exact next command/action: Implement Title/FileSelect/DayTelop states in `crates/pmm-game`, wire into `src/main.rs`, run host tests + PPSSPP Slim test, log results, and commit Step 08.
 
 ======================================================================
 APPEND-ONLY CHANGE LOG

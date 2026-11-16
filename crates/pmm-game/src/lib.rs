@@ -6,6 +6,7 @@ pub mod graph;
 pub mod interp;
 pub mod padmgr;
 pub mod save;
+pub mod states;
 pub mod thga;
 
 #[cfg(test)]
@@ -229,5 +230,194 @@ mod tests {
         assert_eq!(pacer.compute_sleep_usec(u32::MAX - 5_000, FRAME_40FPS_USEC), 0);
         let wait = pacer.compute_sleep_usec(u32::MAX - 1_000, FRAME_40FPS_USEC);
         assert_eq!(wait, 21_000);
+    }
+
+    fn build_test_pak_with_messages() -> alloc::vec::Vec<u8> {
+        use pmm_schema::{PAK_ENTRY_SIZE, PAK_HEADER_SIZE, PmmPakEntry, PmmPakHeader, ResourceId, fourcc};
+        let payload = b"Dawn of the First Day\xbf-72 Hours Remain-\xbfLink\xbf";
+        let id = ResourceId::from_otr_path("__OTR__seg/message_data_static").0;
+        let data_offset = ((PAK_HEADER_SIZE + PAK_ENTRY_SIZE + 15) / 16) * 16;
+        let total_size = data_offset + payload.len();
+        let hdr = PmmPakHeader::new(1, PAK_HEADER_SIZE as u32, data_offset as u32, 0x1234_5678, 0, total_size as u32);
+        let entry = PmmPakEntry {
+            id,
+            fourcc: fourcc::OTXM,
+            flags: 0,
+            offset: data_offset as u32,
+            size: payload.len() as u32,
+            uncompressed_size: payload.len() as u32,
+            align: 16,
+        };
+        let mut pak = alloc::vec![0u8; total_size];
+        pak[..PAK_HEADER_SIZE].copy_from_slice(&hdr.to_le_bytes());
+        pak[PAK_HEADER_SIZE..PAK_HEADER_SIZE + PAK_ENTRY_SIZE].copy_from_slice(&entry.to_le_bytes());
+        pak[data_offset..data_offset + payload.len()].copy_from_slice(payload);
+        pak
+    }
+
+    #[test]
+    fn step08_title_setup_and_console_logo_fade_skip() {
+        use pmm_assets::{BoundedArena, MemPakSource, ResourceManager};
+        use pmm_gfx::{MockGfxBackend, Renderer};
+        use states::{ConsoleLogoState, ScriptedPadInjector, TitleSetupState};
+
+        let pak = build_test_pak_with_messages();
+        let mut res = ResourceManager::open(MemPakSource::new(pak)).expect("open test pak");
+        let mut mem = alloc::vec![0u8; 4096];
+        let mut arena = BoundedArena::from_slice(&mut mem);
+        let mut flash = SysFlashrom::new(MemFlashIo::default());
+
+        let mut setup = TitleSetupState::new();
+        let (save, msgs, next) = setup.update(&mut flash, &mut res, &mut arena);
+        assert_eq!(next, graph::GameStateId::Title);
+        assert_eq!(save.health_capacity, 0x30);
+        assert!(msgs.loaded_from_pak);
+        assert_eq!(msgs.entry_count, 3);
+
+        let mut logo = ConsoleLogoState::new();
+        let mut pad_mgr = PadMgr::new();
+        let mut interp = FrameInterpolator::new();
+        let mut pool = GfxPool::new();
+        let mut renderer = Renderer::new();
+        let mut backend = MockGfxBackend::default();
+        let mut script = ScriptedPadInjector::new();
+        // Hold off until cover_alpha hits 0 (~22 ticks), then press START at tick 24
+        script.push_press(24, n64_btn::START_BUTTON);
+
+        let mut transitioned = None;
+        for _ in 0..80 {
+            let (btn, sx, sy) = script.sample_tick();
+            let pad = pad_mgr.update_n64_raw(btn, sx, sy);
+            let res_next = logo.update_logic(&pad, &mut interp);
+            logo.draw_frame(&mut pool, &mut renderer, &mut res, &mut backend, &mut interp, 0.5);
+            logo.draw_frame(&mut pool, &mut renderer, &mut res, &mut backend, &mut interp, 1.0);
+            if res_next.is_some() {
+                transitioned = res_next;
+                break;
+            }
+        }
+        assert_eq!(transitioned, Some(graph::GameStateId::FileChoose));
+        assert!(logo.fade_in_seen && logo.hold_seen && logo.fade_out_seen);
+        assert!(renderer.stats.triangles_submitted >= 80);
+    }
+
+    #[test]
+    fn step08_file_select_create_copy_erase_and_corrupt_recovery() {
+        use states::{ConfigMode, FileOpOutcome, FileSelectState};
+
+        let mut flash = SysFlashrom::new(MemFlashIo::default());
+        let mut fs = FileSelectState::new(&mut flash);
+        let mut pad_mgr = PadMgr::new();
+        let mut interp = FrameInterpolator::new();
+
+        // Create slot 0 as "Link" and run 40-tick async save wait
+        assert!(fs.begin_create_slot(0, "Link"));
+        assert_eq!(fs.config_mode, ConfigMode::NameEntry);
+        assert!(fs.confirm_name_entry(&mut flash));
+        assert_eq!(fs.config_mode, ConfigMode::NameEntryWaitForFlashSave);
+        let mut idle = pad_mgr.update_n64_raw(0, 0, 0);
+        for _ in 0..40 {
+            fs.update_logic(&idle, &mut flash, &mut interp);
+        }
+        assert_eq!(fs.config_mode, ConfigMode::MainMenu);
+        assert!(fs.slot_valid[0]);
+        assert_eq!(fs.last_op, Some(FileOpOutcome::CreatedSlot(0)));
+        assert_eq!(fs.slots[0].as_ref().unwrap().health_capacity, 0x30);
+        assert_eq!(fs.slots[0].as_ref().unwrap().time, 0x4000);
+
+        // Copy slot 0 -> slot 1
+        assert!(fs.start_copy_slot(&mut flash, 0, 1));
+        for _ in 0..40 {
+            fs.update_logic(&idle, &mut flash, &mut interp);
+        }
+        assert!(fs.slot_valid[1]);
+        assert_eq!(fs.last_op, Some(FileOpOutcome::CopiedSlot { src: 0, dst: 1 }));
+
+        // Erase slot 1
+        assert!(fs.start_erase_slot(&mut flash, 1));
+        for _ in 0..40 {
+            fs.update_logic(&idle, &mut flash, &mut interp);
+        }
+        assert!(!fs.slot_valid[1]);
+        assert_eq!(fs.last_op, Some(FileOpOutcome::ErasedSlot(1)));
+
+        // Corrupt slot 2 negative recovery
+        assert!(fs.verify_corrupt_slot_recovery(&mut flash, 2));
+        assert!(!fs.slot_valid[2]);
+
+        // Launch slot 0 -> DayTelop
+        assert!(fs.launch_slot(0));
+        idle = pad_mgr.update_n64_raw(n64_btn::A_BUTTON, 0, 0);
+        let mut launched = None;
+        for _ in 0..16 {
+            if let Some(res) = fs.update_logic(&idle, &mut flash, &mut interp) {
+                launched = Some(res);
+                break;
+            }
+            idle = pad_mgr.update_n64_raw(0, 0, 0);
+        }
+        let (next_state, ctx) = launched.expect("launched slot 0");
+        assert_eq!(next_state, graph::GameStateId::DayTelop);
+        assert_eq!(ctx.time, 0x4000);
+    }
+
+    #[test]
+    fn step08_day_telop_renders_and_transitions_to_play() {
+        use pmm_assets::{BoundedArena, MemPakSource, ResourceManager};
+        use pmm_gfx::{MockGfxBackend, Renderer};
+        use states::{DayTelopState, OTRMessageTable};
+
+        let pak = build_test_pak_with_messages();
+        let mut res = ResourceManager::open(MemPakSource::new(pak)).expect("open pak");
+        let mut mem = alloc::vec![0u8; 4096];
+        let mut arena = BoundedArena::from_slice(&mut mem);
+        let msgs = OTRMessageTable::load(&mut res, &mut arena);
+
+        let mut telop = DayTelopState::new(1, &msgs);
+        assert_eq!(telop.title, "Dawn of the First Day");
+        assert_eq!(telop.subtitle, "-72 Hours Remain-");
+
+        let mut interp = FrameInterpolator::new();
+        let mut pool = GfxPool::new();
+        let mut renderer = Renderer::new();
+        let mut backend = MockGfxBackend::default();
+
+        let mut next = None;
+        for _ in 0..40 {
+            next = telop.update_logic(&mut interp);
+            telop.draw_frame(&mut pool, &mut renderer, &mut res, &mut backend, &mut interp, 0.5);
+            telop.draw_frame(&mut pool, &mut renderer, &mut res, &mut backend, &mut interp, 1.0);
+        }
+        assert_eq!(next, Some(graph::GameStateId::Play));
+        assert!(renderer.stats.triangles_submitted >= 160);
+    }
+
+    #[test]
+    fn step08_options_menu_and_cancel_name_entry() {
+        use states::{ConfigMode, FileSelectState, MenuMode};
+
+        let mut flash = SysFlashrom::new(MemFlashIo::default());
+        let mut fs = FileSelectState::new(&mut flash);
+        let mut pad_mgr = PadMgr::new();
+        let mut interp = FrameInterpolator::new();
+
+        // Advance out of Init into MainMenu
+        let idle = pad_mgr.update_n64_raw(0, 0, 0);
+        for _ in 0..12 {
+            fs.update_logic(&idle, &mut flash, &mut interp);
+        }
+        assert_eq!(fs.menu_mode, MenuMode::Config);
+        assert_eq!(fs.config_mode, ConfigMode::MainMenu);
+
+        // Press R -> OptionsMenu, press A -> toggle Z-target hold, press B -> MainMenu
+        let p_r = pad_mgr.update_n64_raw(n64_btn::R_TRIG, 0, 0);
+        fs.update_logic(&p_r, &mut flash, &mut interp);
+        assert_eq!(fs.config_mode, ConfigMode::OptionsMenu);
+        let p_a = pad_mgr.update_n64_raw(n64_btn::A_BUTTON, 0, 0);
+        fs.update_logic(&p_a, &mut flash, &mut interp);
+        assert!(fs.options.z_target_hold);
+        let p_b = pad_mgr.update_n64_raw(n64_btn::B_BUTTON, 0, 0);
+        fs.update_logic(&p_b, &mut flash, &mut interp);
+        assert_eq!(fs.config_mode, ConfigMode::MainMenu);
     }
 }
