@@ -1,0 +1,50 @@
+======================================================================
+STEP 05 VERIFICATION LOG -- PMM-GFX F3DEX2->SCEGU, CALLLIST, & VFPU
+Date: 2026-11-16
+Verifier: Gemini Hydrogen (High)
+Repository Root: /mnt/6421-8598/building/PocketMajora
+======================================================================
+
+1. HOST UNIT TESTS (`crates/pmm-gfx`)
+----------------------------------------------------------------------
+Command:
+  `cargo test --manifest-path crates/pmm-gfx/Cargo.toml --target x86_64-unknown-linux-gnu`
+Result:
+  `10 passed; 0 failed`
+  - `vram_layout_fits_exact_2mib` ... ok
+  - `near_plane_clipper_all_cases` ... ok
+  - `clock_town_12bit_tile_wrapping` ... ok
+  - `letterbox_scissor_zero_gap_all_sizes_0_to_32` ... ok
+  - `matrix_mul_and_lerp_math` ... ok
+  - `recursive_dl_depth_limit_negative_test` ... ok
+  - `static_calllist_caching_and_state_dedup` ... ok
+  - `matrix_stack_push_pop_and_underflow_negative` ... ok
+  - `motion_blur_capture_increments_counter` ... ok
+  - `mtx_stack_overflow_negative` ... ok
+
+2. PPSSPP SLIM (`PSPModel = 1`, `MEMSIZE=1`) EXECUTION (`./scripts/test_step05.sh`)
+----------------------------------------------------------------------
+Actual `step05_gfx.log` written by `EBOOT.PBP`:
+```
+STATUS: PASS
+VRAM_LAYOUT_TOTAL_BYTES: 2097152
+FRAMES_RENDERED: 180
+AVG_RENDER_PASS_CPU_US: 68
+TOTAL_GBI_COMMANDS_DECODED: 1465
+TOTAL_TRIANGLES_SUBMITTED: 720
+TEXTURES_UPLOADED_AND_CACHED: 2
+STATIC_MESH_CALLLIST_HITS: 179
+REDUNDANT_STATE_BINDS_SUPPRESSED: 2
+VFPU_MATRIX_LERP_EQUIVALENCE: OK
+MOTION_BLUR_GPU_COPYIMAGE_PASSES: 6
+NEGATIVE_DL_DEPTH_OVERFLOW_GUARD: EXPECTED_ERR_CAUGHT
+```
+Verification:
+- `EBOOT.PBP` (368 KiB) initialized triple-buffered 16-bit LCD + Z + motion-blur
+  eDRAM layout (`2,097,152` bytes), verified `vfpu_asm!` `vmmul.q` and
+  `vsub.q`/`vscl.q`/`vadd.q` matrix lerp against scalar Rust (`< 1e-4`),
+  compiled `room0_dl` into a Pool 3 `sceGuCallList` (`179` hits over `180` frames),
+  uploaded 2 swizzled textures from `pmm_2s2h.pak`, ran 6 `sceGuCopyImage` blur
+  captures, and caught recursive `G_DL` depth overflow cleanly.
+- Real PSP-3000 hardware test: NOT RUN.
+======================================================================

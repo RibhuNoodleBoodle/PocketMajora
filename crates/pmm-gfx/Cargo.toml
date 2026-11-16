@@ -1,0 +1,13 @@
+[package]
+name = "pmm-gfx"
+version = "0.1.0"
+edition = "2024"
+
+[features]
+default = []
+psp = ["dep:psp"]
+
+[dependencies]
+pmm-schema = { path = "../pmm-schema" }
+pmm-assets = { path = "../pmm-assets" }
+psp = { path = "../../tools/rust-psp/psp", optional = true }

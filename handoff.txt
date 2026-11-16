@@ -19,12 +19,12 @@ Candidate worker folder: gemini_flash/Gemini_Step_XX.txt
 ======================================================================
 CURRENT PROJECT STATE -- VERIFIED AT STAGE 4
 ======================================================================
-CURRENT STAGE: STEP 04 PASS -> STARTING STEP 05
-LAST COMPLETED: STEP 04 -- BOUNDED RUST PSP ASSET LOADER & 20X RELOAD TEST (2026-11-16)
-LAST ATTEMPTED: STEP 04 -- BOUNDED RUST PSP ASSET LOADER & STREAMING VERIFICATION (PASS)
+CURRENT STAGE: STEP 05 PASS -> STARTING STEP 06
+LAST COMPLETED: STEP 05 -- PMM-GFX F3DEX2->SCEGU, CALLLIST MESHES, VFPU MATRIX LERP (2026-11-16)
+LAST ATTEMPTED: STEP 05 -- RUST F3DEX2 -> SCEGU RENDERER & 180-FRAME 3D PROOF (PASS)
 ACTIVE MODEL: Gemini Hydrogen (High)
 REPOSITORY ROOT: /mnt/6421-8598/building/PocketMajora
-BRANCH / GIT HEAD: main (tracking origin/main) / prior commit c85390578e095639b86642524d2deffed0677614
+BRANCH / GIT HEAD: main (tracking origin/main) / prior commit 83533ad88cabc2baab04343b1488afd5ae4012b7
 DIRTY / UNCOMMITTED FILES:
   - Untracked source trees at root: `majora_code/` (2S2H v5.1.0), `psp_ref/` (z2442/mm-PSP)
   - Untracked prompt files: `Gemini_Argon_Medium_Rust_PSP3000_Master_Prompt.txt`, `Gemini_Resume_Medium_PSP_Rust.txt`
@@ -104,12 +104,12 @@ OWNER NEW INSTRUCTIONS / MANUAL OBSERVATIONS:
 ======================================================================
 AGENT CHECKPOINT (MODELS UPDATE THIS SECTION FREQUENTLY)
 ======================================================================
-What just happened: Completed Step 04 (`PASS`). Implemented `crates/pmm-assets` (`BoundedArena`, `SegmentTable`, `ResourceManager`, `MemPakSource`) + `src/platform/pak_io.rs` (`PspPakSource` 16 KiB chunked `sceIo*` + suspend/resume FD). Passed 8/8 host tests and PPSSPP Slim 20x reload test with `0` leaked bytes (`docs/research/04_step04_verification_log.txt`).
-Last checked source path: /mnt/6421-8598/building/PocketMajora/docs/research/04_step04_verification_log.txt
-Last verified command / output: `./scripts/test_step04.sh` -> `8 passed`, `STATUS: PASS`, `KERNEL_FREE_MEM_DELTA_AFTER_20_CYCLES: 0`.
-Modified files since last commit: `Cargo.toml`, `Cargo.lock`, `crates/pmm-assets/*`, `src/platform/*`, `src/main.rs`, `scripts/test_step04.sh`, `docs/research/04_step04_verification_log.txt`, `gemini_flash/INDEX.txt`, `handoff.txt`.
-Potential work loss if session ends now: NONE (committing Step 04 now).
-Exact next command/action: Execute `gemini_flash/Gemini_Step_05.txt` (`crates/pmm-gfx`: F3DEX2 -> `sceGu`, compiled `sceGuCallList` meshes, VFPU matrix lerp, 180-frame PPSSPP proof).
+What just happened: Completed Step 05 (`PASS`). Implemented `crates/pmm-gfx` + `src/platform/gfx_psp.rs` (2 MiB triple-buffered LCD+Z+blur VRAM layout, F3DEX2 interpreter, `sceGuCallList` static mesh caching, `vfpu_asm!` matrix multiply/lerp, near-plane clipper, 12-bit tile wrap, letterbox scissor rounding). Passed 10/10 host tests and 180-frame PPSSPP Slim proof (`docs/research/05_step05_verification_log.txt`).
+Last checked source path: /mnt/6421-8598/building/PocketMajora/docs/research/05_step05_verification_log.txt
+Last verified command / output: `./scripts/test_step05.sh` -> `10 passed`, `STATUS: PASS`, `STATIC_MESH_CALLLIST_HITS: 179`, `VFPU_MATRIX_LERP_EQUIVALENCE: OK`.
+Modified files since last commit: `Cargo.toml`, `Cargo.lock`, `crates/pmm-gfx/*`, `src/platform/*`, `src/main.rs`, `scripts/test_step05.sh`, `docs/research/05_step05_verification_log.txt`, `gemini_flash/INDEX.txt`, `handoff.txt`.
+Potential work loss if session ends now: NONE (committing Step 05 now).
+Exact next command/action: Execute `gemini_flash/Gemini_Step_06.txt` (`crates/pmm-game`: 40 FPS / 25 ms interpolated render + 20 Hz Graph loop, `PadMgr`, `SysFlashrom` 128 KiB save).
 
 ======================================================================
 APPEND-ONLY CHANGE LOG
@@ -167,6 +167,11 @@ APPEND-ONLY CHANGE LOG
              Verified PPSSPP Slim `pmm_2s2h.pak` open, 20x Scene+Room reloads with
              0-byte leak, segment disambiguation, and suspend/resume FD reopen
              (`04_step04_verification_log.txt`).
+2026-11-16 Gemini Hydrogen (High): Completed Step 05 (`PASS`). Implemented
+             `crates/pmm-gfx` (10/10 host tests) and `src/platform/gfx_psp.rs`.
+             Verified 180-frame PPSSPP Slim 3D proof with `sceGuCallList` cache
+             (`179` hits), `vfpu_asm!` matrix multiply/lerp equivalence, 6 GPU
+             motion-blur captures, and recursive DL guard (`05_step05_verification_log.txt`).
 
 ======================================================================
 RECOVERY RULES (IF ARGON OR FLASH FAILS / TOKENS EXPIRE)

@@ -4,6 +4,7 @@ members = [
     ".",
     "crates/pmm-schema",
     "crates/pmm-assets",
+    "crates/pmm-gfx",
     "tools/pmm-extractor",
 ]
 exclude = ["tools/rust-psp"]
@@ -25,8 +26,10 @@ edition = "2024"
 
 [dependencies]
 psp = { path = "tools/rust-psp/psp" }
+libm = "0.2.16"
 pmm-schema = { path = "crates/pmm-schema" }
 pmm-assets = { path = "crates/pmm-assets" }
+pmm-gfx = { path = "crates/pmm-gfx", features = ["psp"] }
 
 [patch.crates-io]
 unicode-width = { git = "https://git.sr.ht/~sajattack/unicode-width" }

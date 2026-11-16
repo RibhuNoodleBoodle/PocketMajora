@@ -84,6 +84,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "pmm-gfx"
+version = "0.1.0"
+dependencies = [
+ "pmm-assets",
+ "pmm-schema",
+ "psp",
+]
+
+[[package]]
 name = "pmm-schema"
 version = "0.1.0"
 
@@ -91,7 +100,9 @@ version = "0.1.0"
 name = "pocket-majora"
 version = "0.1.0"
 dependencies = [
+ "libm",
  "pmm-assets",
+ "pmm-gfx",
  "pmm-schema",
  "psp",
 ]
