@@ -4,6 +4,7 @@
 extern crate alloc;
 
 pub mod math;
+pub mod vfpu;
 pub mod vram;
 
 use alloc::vec::Vec;
@@ -595,5 +596,11 @@ mod tests {
                 .unwrap_err(),
             GfxError::MatrixStackOverflow
         );
+    }
+
+    #[test]
+    fn vfpu_equivalence_and_vec4_transform() {
+        let err = crate::vfpu::verify_vfpu_equivalence();
+        assert!(err < 1e-4, "VFPU vs scalar error {err}");
     }
 }

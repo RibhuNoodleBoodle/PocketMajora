@@ -21,6 +21,6 @@ STEP | FILE                            | PREREQUISITE    | STATUS
      | (Interactive Title Screen -> File Select 3-slot save creation & reload)
 09   | gemini_flash/Gemini_Step_09.txt | Step 08 PASS    | PASS (300 ticks, 600 frames @ 25000us, 0 leak, Clock Town OK)
      | (Playable Clock Town vertical slice + 3-Day Clock cycle & HUD regression)
-10   | gemini_flash/Gemini_Step_10.txt | Step 09 PASS    | READY TO EXECUTE (Final)
+10   | gemini_flash/Gemini_Step_10.txt | Step 09 PASS    | PASS (63/63 host, 24989us @ 40FPS, 0.000000 VFPU err, ROM-free zip OK)
      | (VFPU/cache/crash hardening + standalone PSP-3000 release packaging)
 ======================================================================
