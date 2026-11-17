@@ -1584,7 +1584,7 @@ void OotPspAudioBackend_SubmitSynthesis(Acmd* cmdList, s16* aiBuffer, s32 aiFram
     OotPspAudioBackend_ResetMeWriteRanges();
     OotPspAudioSynth_WritebackMeState();
 #if OOT_PSP_WAKE_DIAGNOSTICS
-    sAudioWakeCpuSynthInputs[0] = gAudioCtx.audioBufferParameters.ticksPerUpdate;
+    sAudioWakeCpuSynthInputs[0] = gAudioCtx.audioBufferParameters.specUnk4;
     sAudioWakeCpuSynthInputs[1] = gAudioCtx.numNotes;
     sAudioWakeCpuSynthInputs[2] = gAudioCtx.numSynthesisReverbs;
     sAudioWakeCpuSynthInputs[3] = aiFrames;
