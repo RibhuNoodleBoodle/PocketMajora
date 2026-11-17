@@ -38,8 +38,10 @@
 #include "oot_psp_shadow.h"
 #include "oot_psp_memory.h"
 #if defined(TARGET_PSP)
+#include "oot_psp_audio_backend.h"
 #include "oot_psp_performance.h"
 #include "oot_psp_video_thread.h"
+#include "mm_psp_diag_log.h"
 #endif
 #include "segmented_address.h"
 #include "sys_matrix.h"
@@ -103,6 +105,9 @@
 extern void gfx_scegu_draw_triangles_2d(float buf_vbo[], size_t buf_vbo_len, size_t buf_vbo_num_tris);
 extern void gfx_scegu_draw_texture_multiply_triangles_2d(float buf_vbo[], size_t buf_vbo_len,
                                                           size_t buf_vbo_num_tris);
+#if defined(TARGET_PSP)
+extern void gfx_scegu_set_fog_additive(bool enabled);
+#endif
 extern float identity_matrix[4][4];
 extern Mtx D_01000000;
 
@@ -611,6 +616,11 @@ static bool gfx_is_valid_native_read_range(uintptr_t value, size_t size) {
     }
 
     if (OotPsp_IsRuntimeByteRange((const void*)value, size)) {
+#if defined(TARGET_PSP)
+        if (OotPspAudio_IsExternalPoolRange((const void*)value, size)) {
+            return false;
+        }
+#endif
         return true;
     }
 
@@ -644,21 +654,21 @@ static void gfx_log_bad_data_source(const char* context, const void* addr, size_
     }
 
     if (sBadDataSourceLogCount < 32) {
-        printf("oot-psp gfx bad data source context=%s addr=%08lx size=%lu cur=%08lx/%08lx/%08lx "
-               "seg=%u segbase=%08lx segcmd=%08lx/%08lx/%08lx "
-               "seg1=%08lx seg2=%08lx seg3=%08lx seg4=%08lx seg6=%08lx seg8=%08lx seg9=%08lx sega=%08lx "
-               "segc=%08lx segd=%08lx segacmd=%08lx/%08lx/%08lx\n",
-               context, (unsigned long)value, (unsigned long)sizeBytes, (unsigned long)sCurrentCmd.addr,
-               (unsigned long)sCurrentCmd.w0, (unsigned long)sCurrentCmd.w1, segment,
-               (segment < NUM_SEGMENTS) ? (unsigned long)(uintptr_t)rsp.segments[segment] : 0,
-               (unsigned long)segmentCmd->addr, (unsigned long)segmentCmd->w0, (unsigned long)segmentCmd->w1,
-               (unsigned long)(uintptr_t)rsp.segments[1], (unsigned long)(uintptr_t)rsp.segments[2],
-               (unsigned long)(uintptr_t)rsp.segments[3], (unsigned long)(uintptr_t)rsp.segments[4],
-               (unsigned long)(uintptr_t)rsp.segments[6], (unsigned long)(uintptr_t)rsp.segments[8],
-               (unsigned long)(uintptr_t)rsp.segments[9], (unsigned long)(uintptr_t)rsp.segments[10],
-               (unsigned long)(uintptr_t)rsp.segments[12], (unsigned long)(uintptr_t)rsp.segments[13],
-               (unsigned long)rsp.segment_cmd[10].addr, (unsigned long)rsp.segment_cmd[10].w0,
-               (unsigned long)rsp.segment_cmd[10].w1);
+        MmPsp_DiagLog("oot-psp gfx bad data source context=%s addr=%08lx size=%lu cur=%08lx/%08lx/%08lx "
+                      "seg=%u segbase=%08lx segcmd=%08lx/%08lx/%08lx "
+                      "seg1=%08lx seg2=%08lx seg3=%08lx seg4=%08lx seg6=%08lx seg8=%08lx seg9=%08lx sega=%08lx "
+                      "segc=%08lx segd=%08lx segacmd=%08lx/%08lx/%08lx",
+                      context, (unsigned long)value, (unsigned long)sizeBytes, (unsigned long)sCurrentCmd.addr,
+                      (unsigned long)sCurrentCmd.w0, (unsigned long)sCurrentCmd.w1, segment,
+                      (segment < NUM_SEGMENTS) ? (unsigned long)(uintptr_t)rsp.segments[segment] : 0,
+                      (unsigned long)segmentCmd->addr, (unsigned long)segmentCmd->w0, (unsigned long)segmentCmd->w1,
+                      (unsigned long)(uintptr_t)rsp.segments[1], (unsigned long)(uintptr_t)rsp.segments[2],
+                      (unsigned long)(uintptr_t)rsp.segments[3], (unsigned long)(uintptr_t)rsp.segments[4],
+                      (unsigned long)(uintptr_t)rsp.segments[6], (unsigned long)(uintptr_t)rsp.segments[8],
+                      (unsigned long)(uintptr_t)rsp.segments[9], (unsigned long)(uintptr_t)rsp.segments[10],
+                      (unsigned long)(uintptr_t)rsp.segments[12], (unsigned long)(uintptr_t)rsp.segments[13],
+                      (unsigned long)rsp.segment_cmd[10].addr, (unsigned long)rsp.segment_cmd[10].w0,
+                      (unsigned long)rsp.segment_cmd[10].w1);
     } else if (sBadDataSourceLogCount == 32) {
         printf("oot-psp gfx bad data source logs suppressed\n");
     }
@@ -679,24 +689,24 @@ static void gfx_log_bad_texture_source(int tile, const char* context, const uint
             loadCmd = &rdp.loaded_texture[tile].load_cmd;
         }
 
-        printf("oot-psp gfx bad texture source context=%s tile=%d addr=%08lx size=%lu cur=%08lx/%08lx/%08lx "
-               "setimg=%08lx/%08lx/%08lx load=%08lx/%08lx/%08lx tex=%08lx fmt=%u siz=%u width=%lu "
-               "loadslot=%u seg1=%08lx seg4=%08lx seg8=%08lx seg9=%08lx sega=%08lx segd=%08lx "
-               "seg8cmd=%08lx/%08lx/%08lx seg9cmd=%08lx/%08lx/%08lx segacmd=%08lx/%08lx/%08lx\n",
-               context, tile, (unsigned long)(uintptr_t)addr, (unsigned long)sizeBytes,
-               (unsigned long)sCurrentCmd.addr, (unsigned long)sCurrentCmd.w0, (unsigned long)sCurrentCmd.w1,
-               (unsigned long)imageCmd->addr, (unsigned long)imageCmd->w0, (unsigned long)imageCmd->w1,
-               (unsigned long)loadCmd->addr, (unsigned long)loadCmd->w0, (unsigned long)loadCmd->w1,
-               (unsigned long)(uintptr_t)rdp.texture_to_load.addr, rdp.texture_to_load.fmt, rdp.texture_to_load.siz,
-               (unsigned long)rdp.texture_to_load.width, rdp.texture_to_load.tile_number,
-               (unsigned long)(uintptr_t)rsp.segments[1], (unsigned long)(uintptr_t)rsp.segments[4],
-               (unsigned long)(uintptr_t)rsp.segments[8], (unsigned long)(uintptr_t)rsp.segments[9],
-               (unsigned long)(uintptr_t)rsp.segments[10], (unsigned long)(uintptr_t)rsp.segments[13],
-               (unsigned long)rsp.segment_cmd[8].addr, (unsigned long)rsp.segment_cmd[8].w0,
-               (unsigned long)rsp.segment_cmd[8].w1, (unsigned long)rsp.segment_cmd[9].addr,
-               (unsigned long)rsp.segment_cmd[9].w0, (unsigned long)rsp.segment_cmd[9].w1,
-               (unsigned long)rsp.segment_cmd[10].addr, (unsigned long)rsp.segment_cmd[10].w0,
-               (unsigned long)rsp.segment_cmd[10].w1);
+        MmPsp_DiagLog("oot-psp gfx bad texture source context=%s tile=%d addr=%08lx size=%lu cur=%08lx/%08lx/%08lx "
+                      "setimg=%08lx/%08lx/%08lx load=%08lx/%08lx/%08lx tex=%08lx fmt=%u siz=%u width=%lu "
+                      "loadslot=%u seg1=%08lx seg4=%08lx seg8=%08lx seg9=%08lx sega=%08lx segd=%08lx "
+                      "seg8cmd=%08lx/%08lx/%08lx seg9cmd=%08lx/%08lx/%08lx segacmd=%08lx/%08lx/%08lx",
+                      context, tile, (unsigned long)(uintptr_t)addr, (unsigned long)sizeBytes,
+                      (unsigned long)sCurrentCmd.addr, (unsigned long)sCurrentCmd.w0, (unsigned long)sCurrentCmd.w1,
+                      (unsigned long)imageCmd->addr, (unsigned long)imageCmd->w0, (unsigned long)imageCmd->w1,
+                      (unsigned long)loadCmd->addr, (unsigned long)loadCmd->w0, (unsigned long)loadCmd->w1,
+                      (unsigned long)(uintptr_t)rdp.texture_to_load.addr, rdp.texture_to_load.fmt,
+                      rdp.texture_to_load.siz, (unsigned long)rdp.texture_to_load.width,
+                      rdp.texture_to_load.tile_number, (unsigned long)(uintptr_t)rsp.segments[1],
+                      (unsigned long)(uintptr_t)rsp.segments[4], (unsigned long)(uintptr_t)rsp.segments[8],
+                      (unsigned long)(uintptr_t)rsp.segments[9], (unsigned long)(uintptr_t)rsp.segments[10],
+                      (unsigned long)(uintptr_t)rsp.segments[13], (unsigned long)rsp.segment_cmd[8].addr,
+                      (unsigned long)rsp.segment_cmd[8].w0, (unsigned long)rsp.segment_cmd[8].w1,
+                      (unsigned long)rsp.segment_cmd[9].addr, (unsigned long)rsp.segment_cmd[9].w0,
+                      (unsigned long)rsp.segment_cmd[9].w1, (unsigned long)rsp.segment_cmd[10].addr,
+                      (unsigned long)rsp.segment_cmd[10].w0, (unsigned long)rsp.segment_cmd[10].w1);
     } else if (sBadTextureSourceLogCount == 16) {
         printf("oot-psp gfx bad texture source logs suppressed\n");
     }
@@ -1561,6 +1571,33 @@ static void gfx_flush(void) {
         const bool twoTextureAlphaFog =
             useFog && twoTextureBlend && !twoTextureMultiply &&
             rendering_state.tri_pipeline.two_texture_alpha_blend;
+        const bool additiveFog =
+            useFog && rendering_state.alpha_blend && !twoTextureBlend &&
+            !rendering_state.tri_pipeline.color_add_prim &&
+            !rendering_state.tri_pipeline.comb->texture_blend;
+
+        if (additiveFog) {
+            /* Pre-attenuate base RGB by (1 - fogAlpha) so Pass 2 can add fog
+             * cleanly without corrupting framebuffer dst weight on XLU blends. */
+            const bool useSurfaceAlpha = rendering_state.tri_pipeline.use_alpha;
+            for (size_t i = 0; i < buf_num_vert; i++) {
+                uint32_t fogAlpha = fogUsesTextureAlpha ? buf_vbo_fog.textured[i].color.a
+                                                        : buf_vbo_fog.color[i].color.a;
+                if (fogAlpha == 0U) continue;
+                if (useSurfaceAlpha && buf_vbo[i].color.a != 255U) {
+                    if (buf_vbo[i].color.a == 0U) {
+                        fogAlpha = 0U;
+                    } else {
+                        fogAlpha = (fogAlpha * 255U + (buf_vbo[i].color.a >> 1)) / buf_vbo[i].color.a;
+                        if (fogAlpha > 255U) fogAlpha = 255U;
+                    }
+                }
+                const uint32_t invFog = 255U - fogAlpha;
+                buf_vbo[i].color.r = (uint8_t)(((uint32_t)buf_vbo[i].color.r * invFog + 127U) / 255U);
+                buf_vbo[i].color.g = (uint8_t)(((uint32_t)buf_vbo[i].color.g * invFog + 127U) / 255U);
+                buf_vbo[i].color.b = (uint8_t)(((uint32_t)buf_vbo[i].color.b * invFog + 127U) / 255U);
+            }
+        }
 
         /* The cache may refresh an animated palette in place on a later
          * frame. Record the allocations consumed by this GU list so a second
@@ -1675,8 +1712,12 @@ static void gfx_flush(void) {
                     rendering_state.bound_texture_tile = 0;
                 }
             } else {
+                gfx_scegu_set_fog_additive(additiveFog);
                 gfx_rapi->draw_fog_triangles(fogBuffer, fogBufferLen, buf_vbo_num_tris,
                                              fogUsesTextureAlpha, true);
+                if (additiveFog) {
+                    gfx_scegu_set_fog_additive(false);
+                }
             }
         }
 #endif
@@ -2498,6 +2539,79 @@ static inline uint16_t gfx_rgba16_to_gu5551(uint16_t color) {
            ((color & 0x07C0U) >> 1) | ((color & 0xF800U) >> 11);
 }
 
+#if defined(TARGET_PSP)
+static uint32_t gfx_unpack_texel_rgba(const void* buf, uint32_t index, int psm,
+                                      uint32_t* r, uint32_t* g, uint32_t* b) {
+    if (psm == GU_PSM_8888) {
+        const uint8_t* p = (const uint8_t*)buf + index * 4U;
+        *r = p[0];
+        *g = p[1];
+        *b = p[2];
+        return p[3];
+    }
+    const uint16_t px = ((const uint16_t*)buf)[index];
+    if (psm == GU_PSM_5551) {
+        *r = px & 0x1FU;
+        *g = (px >> 5) & 0x1FU;
+        *b = (px >> 10) & 0x1FU;
+        return px >> 15;
+    }
+    *r = px & 0xFU;
+    *g = (px >> 4) & 0xFU;
+    *b = (px >> 8) & 0xFU;
+    return px >> 12;
+}
+
+static void gfx_pack_texel_rgb0(void* buf, uint32_t index, int psm,
+                                uint32_t r, uint32_t g, uint32_t b) {
+    if (psm == GU_PSM_8888) {
+        uint8_t* p = (uint8_t*)buf + index * 4U;
+        p[0] = (uint8_t)r;
+        p[1] = (uint8_t)g;
+        p[2] = (uint8_t)b;
+        return;
+    }
+    uint16_t* p = (uint16_t*)buf + index;
+    *p = (psm == GU_PSM_5551)
+             ? (uint16_t)(((b & 0x1FU) << 10) | ((g & 0x1FU) << 5) | (r & 0x1FU))
+             : (uint16_t)(((b & 0xFU) << 8) | ((g & 0xFU) << 4) | (r & 0xFU));
+}
+
+/* Bilinear filtering interpolates RGB and alpha independently, so zero-alpha
+ * texels with black RGB create dark fringes around cutouts. Dilate edge RGB into
+ * adjacent transparent texels without touching non-zero alpha pixels. */
+static void gfx_bleed_alpha_edges(void* buf, uint32_t width, uint32_t height, int psm) {
+    if (width == 0U || height == 0U) return;
+    for (uint32_t y = 0; y < height; y++) {
+        const uint32_t ymin = (y > 0U) ? (y - 1U) : 0U;
+        const uint32_t ymax = (y + 1U < height) ? (y + 1U) : (height - 1U);
+        for (uint32_t x = 0; x < width; x++) {
+            uint32_t r, g, b;
+            const uint32_t idx = y * width + x;
+            if (gfx_unpack_texel_rgba(buf, idx, psm, &r, &g, &b) != 0U) continue;
+            const uint32_t xmin = (x > 0U) ? (x - 1U) : 0U;
+            const uint32_t xmax = (x + 1U < width) ? (x + 1U) : (width - 1U);
+            uint32_t rSum = 0, gSum = 0, bSum = 0, count = 0;
+            for (uint32_t ny = ymin; ny <= ymax; ny++) {
+                for (uint32_t nx = xmin; nx <= xmax; nx++) {
+                    if (gfx_unpack_texel_rgba(buf, ny * width + nx, psm, &r, &g, &b) != 0U) {
+                        rSum += r;
+                        gSum += g;
+                        bSum += b;
+                        count++;
+                    }
+                }
+            }
+            if (count != 0U) {
+                const uint32_t half = count >> 1;
+                gfx_pack_texel_rgb0(buf, idx, psm, (rSum + half) / count,
+                                    (gSum + half) / count, (bSum + half) / count);
+            }
+        }
+    }
+}
+#endif
+
 static void import_texture_rgba16(int tile) {
     uint16_t rgba16_buf[4096] __attribute__ ((aligned(4)));    
     uint32_t width = gfx_texture_import_width(tile);
@@ -2516,6 +2630,9 @@ static void import_texture_rgba16(int tile) {
         }
     }
 
+#if defined(TARGET_PSP)
+    gfx_bleed_alpha_edges(rgba16_buf, width, height, GU_PSM_5551);
+#endif
     gfx_upload_texture(tile, (const uint8_t *)rgba16_buf, width, height, GU_PSM_5551);
 }
 
@@ -2541,6 +2658,9 @@ static void import_texture_rgba32(int tile) {
         }
     }
 
+#if defined(TARGET_PSP)
+    gfx_bleed_alpha_edges(rgba32_buf, width, height, GU_PSM_8888);
+#endif
     gfx_upload_texture(tile, rgba32_buf, width, height, GU_PSM_8888);
 }
 
@@ -2578,6 +2698,9 @@ static void import_texture_ia4(int tile) {
         }
     }
 
+#if defined(TARGET_PSP)
+    gfx_bleed_alpha_edges(rgba32_buf, width, height, GU_PSM_8888);
+#endif
     gfx_upload_texture(tile, rgba32_buf, width, height, GU_PSM_8888);
 }
 
@@ -2602,6 +2725,9 @@ static void import_texture_ia8(int tile) {
         }
     }
 
+#if defined(TARGET_PSP)
+    gfx_bleed_alpha_edges(rgba16_buf, width, height, GU_PSM_4444);
+#endif
     gfx_upload_texture(tile, (const uint8_t*)rgba16_buf, width, height, GU_PSM_4444);
 }
 
@@ -2630,6 +2756,9 @@ static void import_texture_ia16(int tile) {
         }
     }
 
+#if defined(TARGET_PSP)
+    gfx_bleed_alpha_edges(rgba32_buf, width, height, GU_PSM_8888);
+#endif
     gfx_upload_texture(tile, rgba32_buf, width, height, GU_PSM_8888);
 }
 
@@ -2652,6 +2781,9 @@ static void import_texture_i4(int tile) {
         }
     }
 
+#if defined(TARGET_PSP)
+    gfx_bleed_alpha_edges(rgba16_buf, width, height, GU_PSM_4444);
+#endif
     gfx_upload_texture(tile, (const uint8_t*)rgba16_buf, width, height, GU_PSM_4444);
 }
 
@@ -2731,6 +2863,9 @@ static void import_texture_ci4(int tile) {
         }
     }
 
+#if defined(TARGET_PSP)
+    gfx_bleed_alpha_edges(rgba16_buf, width, height, GU_PSM_5551);
+#endif
     gfx_upload_texture(tile, (const uint8_t*)rgba16_buf, width, height, GU_PSM_5551);
 }
 
@@ -2760,6 +2895,9 @@ static void import_texture_ci8(int tile) {
         }
     }
 
+#if defined(TARGET_PSP)
+    gfx_bleed_alpha_edges(rgba16_buf, width, height, GU_PSM_5551);
+#endif
     gfx_upload_texture(tile, (const uint8_t*)rgba16_buf, width, height, GU_PSM_5551);
 }
 
@@ -3479,8 +3617,18 @@ static void gfx_prepare_tri_pipeline_state(bool is_2d) {
     uint32_t cc_id = rdp.combine_mode;
     if (material_texture) {
         /* The material texture contains both alpha cycles. Only SHADE RGB
-         * remains per vertex; consume the baked alpha exactly once. */
-        cc_id = CC_TEXEL0 | (CC_SHADE << 6) | (CC_TEXEL0 << 21);
+         * remains per vertex; consume the baked alpha by default, or multiply
+         * by vertex SHADE alpha when cycle 2 modulates COMBINED * SHADE. */
+        const uint32_t a1_0 = (rdp.combine_w1 >> 21) & 7U;
+        const uint32_t b1 = (rdp.combine_w1 >> 3) & 7U;
+        const uint32_t c1 = (rdp.combine_w1 >> 18) & 7U;
+        const uint32_t d1 = rdp.combine_w1 & 7U;
+        const bool uses_shade_alpha =
+            (b1 == G_ACMUX_0) && (d1 == G_ACMUX_0) &&
+            (((a1_0 == G_ACMUX_COMBINED) && (c1 == G_ACMUX_SHADE)) ||
+             ((a1_0 == G_ACMUX_SHADE) && (c1 == G_ACMUX_COMBINED)));
+        cc_id = CC_TEXEL0 | (CC_SHADE << 6) |
+                (uses_shade_alpha ? ((CC_TEXEL0 << 12) | (CC_SHADE << 18)) : (CC_TEXEL0 << 21));
     }
 
     uint32_t alpha_compare = rdp.other_mode_l & (3 << G_MDSFT_ALPHACOMPARE);
@@ -6650,8 +6798,8 @@ static void gfx_log_unmapped_segment(uintptr_t addr) {
     static s32 sUnmappedSegmentLogCount = 0;
 
     if (sUnmappedSegmentLogCount < 16) {
-        printf("oot-psp gfx unmapped segment addr=%08lx segment=%lu offset=%06lx\n", (unsigned long)addr,
-               (unsigned long)(addr >> 24), (unsigned long)(addr & 0x00FFFFFFU));
+        MmPsp_DiagLog("oot-psp gfx unmapped segment addr=%08lx segment=%lu offset=%06lx", (unsigned long)addr,
+                      (unsigned long)(addr >> 24), (unsigned long)(addr & 0x00FFFFFFU));
     } else if (sUnmappedSegmentLogCount == 16) {
         printf("oot-psp gfx unmapped segment logs suppressed\n");
     }
@@ -6688,18 +6836,18 @@ static void gfx_log_bad_dl_cursor(const char* reason, uintptr_t raw, uintptr_t t
     static s32 sBadDlCursorLogCount = 0;
 
     if (sBadDlCursorLogCount < 32) {
-        printf("oot-psp gfx bad dl cursor reason=%s raw=%08lx translated=%08lx cur=%08lx/%08lx/%08lx "
-               "seg1=%08lx seg2=%08lx seg3=%08lx seg4=%08lx seg6=%08lx seg8=%08lx seg9=%08lx sega=%08lx "
-               "segc=%08lx segd=%08lx segacmd=%08lx/%08lx/%08lx\n",
-               reason, (unsigned long)raw, (unsigned long)translated, (unsigned long)sCurrentCmd.addr,
-               (unsigned long)sCurrentCmd.w0, (unsigned long)sCurrentCmd.w1,
-               (unsigned long)(uintptr_t)rsp.segments[1], (unsigned long)(uintptr_t)rsp.segments[2],
-               (unsigned long)(uintptr_t)rsp.segments[3], (unsigned long)(uintptr_t)rsp.segments[4],
-               (unsigned long)(uintptr_t)rsp.segments[6], (unsigned long)(uintptr_t)rsp.segments[8],
-               (unsigned long)(uintptr_t)rsp.segments[9], (unsigned long)(uintptr_t)rsp.segments[10],
-               (unsigned long)(uintptr_t)rsp.segments[12], (unsigned long)(uintptr_t)rsp.segments[13],
-               (unsigned long)rsp.segment_cmd[10].addr, (unsigned long)rsp.segment_cmd[10].w0,
-               (unsigned long)rsp.segment_cmd[10].w1);
+        MmPsp_DiagLog("oot-psp gfx bad dl cursor reason=%s raw=%08lx translated=%08lx cur=%08lx/%08lx/%08lx "
+                      "seg1=%08lx seg2=%08lx seg3=%08lx seg4=%08lx seg6=%08lx seg8=%08lx seg9=%08lx sega=%08lx "
+                      "segc=%08lx segd=%08lx segacmd=%08lx/%08lx/%08lx",
+                      reason, (unsigned long)raw, (unsigned long)translated, (unsigned long)sCurrentCmd.addr,
+                      (unsigned long)sCurrentCmd.w0, (unsigned long)sCurrentCmd.w1,
+                      (unsigned long)(uintptr_t)rsp.segments[1], (unsigned long)(uintptr_t)rsp.segments[2],
+                      (unsigned long)(uintptr_t)rsp.segments[3], (unsigned long)(uintptr_t)rsp.segments[4],
+                      (unsigned long)(uintptr_t)rsp.segments[6], (unsigned long)(uintptr_t)rsp.segments[8],
+                      (unsigned long)(uintptr_t)rsp.segments[9], (unsigned long)(uintptr_t)rsp.segments[10],
+                      (unsigned long)(uintptr_t)rsp.segments[12], (unsigned long)(uintptr_t)rsp.segments[13],
+                      (unsigned long)rsp.segment_cmd[10].addr, (unsigned long)rsp.segment_cmd[10].w0,
+                      (unsigned long)rsp.segment_cmd[10].w1);
     } else if (sBadDlCursorLogCount == 32) {
         printf("oot-psp gfx bad dl cursor logs suppressed\n");
     }

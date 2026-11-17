@@ -14,6 +14,9 @@
 #include "z64save.h"
 
 #include "assets/interface/parameter_static/parameter_static.h"
+#if PLATFORM_PSP
+#include "oot_psp_gfx_ext.h"
+#endif
 
 #if MM_VERSION >= N64_US
 #define MESSAGE_DECODE(play) Message_DecodeNES(play)
@@ -5214,7 +5217,13 @@ void Message_Draw(PlayState* play) {
     gSPDisplayList(OVERLAY_DISP++, gfx);
 
     if ((play->msgCtx.currentTextId != 0x5E6) || !Play_InCsMode(play)) {
+#if PLATFORM_PSP
+        gOotPspSetHudAnchor(gfx++, OOT_PSP_HUD_ANCHOR_CENTER);
+#endif
         Message_DrawMain(play, &gfx);
+#if PLATFORM_PSP
+        gOotPspSetHudAnchor(gfx++, OOT_PSP_HUD_ANCHOR_NONE);
+#endif
     }
 
     gSPEndDisplayList(gfx++);

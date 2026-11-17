@@ -76,6 +76,7 @@ static struct {
 } rdp;
 static TextureTileState* gfx_get_texture_tile(int slot) { return &rdp.texture_tile[slot]; }
 void gfx_scegu_set_lighting(const struct GfxPspLighting* lighting) { (void)lighting; }
+static void gfx_scegu_set_fog_additive(bool enabled) { (void)enabled; }
 static psp_fast_t captured[2][MAX_BUFFERED*3];
 static size_t counts[2];
 static unsigned calls,selected,appliedBias,biases[2],multiplyCalls;

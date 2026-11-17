@@ -3,6 +3,7 @@
 #include "buffers.h"
 #include "fault.h"
 #include "libc64/malloc.h"
+#include "mm_psp_diag_log.h"
 #include "mm_psp_path.h"
 #include "oot_psp_asset_loader.h"
 #include "oot_psp_audio_backend.h"
@@ -26,7 +27,7 @@
 #include <stdio.h>
 #include <string.h>
 
-PSP_MODULE_INFO("MM PSP Port", 0, 1, 0);
+PSP_MODULE_INFO("pocketmajora", 0, 1, 0);
 PSP_MAIN_THREAD_PRIORITY(0x20);
 PSP_MAIN_THREAD_ATTR(PSP_THREAD_ATTR_USER | PSP_THREAD_ATTR_VFPU);
 /* Leave headroom for raw PSPLink launches while retaining ample room for MM's
@@ -222,6 +223,14 @@ int main(int argc, char** argv) {
     }
 #endif
     printf("mm-psp startup: assets ready\n");
+    MmPsp_DiagLogInit();
+    MmPsp_DiagLog("startup: arena=%p..%p bss=%p..%p free=%lu largest=%lu root=%s",
+                  (void*)gMmPspSystemHeap,
+                  (void*)(gMmPspSystemHeap + MM_PSP_SYSTEM_HEAP_SIZE),
+                  (void*)__bss_start, (void*)_end,
+                  (unsigned long)sceKernelTotalFreeMemSize(),
+                  (unsigned long)sceKernelMaxFreeMemSize(),
+                  executablePath);
 
     OotPspControls_Load();
     if (!MmPspGame_Init()) {

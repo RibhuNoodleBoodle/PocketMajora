@@ -1,5 +1,6 @@
 #include "global.h"
 #if defined(TARGET_PSP) || defined(PLATFORM_PSP)
+#include "mm_psp_diag_log.h"
 #include "oot_psp_asset_loader.h"
 void OotPsp_ResolveRoomList(RomFile* roomFiles, s32 count);
 #endif
@@ -88,6 +89,9 @@ void Object_UpdateEntries(ObjectContext* objectCtx) {
                 size = objectFile->vromEnd - objectFile->vromStart;
 
                 if (size == 0) {
+#if PLATFORM_PSP
+                    MmPsp_DiagLog("object empty slot=%d id=%d", i, id);
+#endif
                     entry->id = 0;
                 } else {
                     osCreateMesgQueue(&entry->loadQueue, &entry->loadMsg, 1);
@@ -96,6 +100,9 @@ void Object_UpdateEntries(ObjectContext* objectCtx) {
                 }
             } else if (!osRecvMesg(&entry->loadQueue, NULL, OS_MESG_NOBLOCK)) {
                 entry->id = id;
+#if PLATFORM_PSP
+                MmPsp_DiagLog("object loaded slot=%d id=%d seg=%p", i, id, entry->segment);
+#endif
             }
         }
 
@@ -166,6 +173,12 @@ void Scene_CommandSpawnList(PlayState* play, SceneCmd* cmd) {
 
     play->linkActorEntry =
         (ActorEntry*)Lib_SegmentedToVirtual(cmd->spawnList.segment) + play->setupEntranceList[play->curSpawn].spawn;
+#if PLATFORM_PSP
+    MmPsp_DiagLog("scene init id=%d entrance=0x%08lx spawn=%d cs=0x%04x form=%d objSpace=%p..%p",
+                  play->sceneId, (unsigned long)gSaveContext.save.entrance, play->curSpawn,
+                  (u16)gSaveContext.save.cutsceneIndex, (s32)GET_PLAYER_FORM,
+                  play->objectCtx.spaceStart, play->objectCtx.spaceEnd);
+#endif
     if ((PLAYER_GET_START_MODE(play->linkActorEntry) == PLAYER_START_MODE_TELESCOPE) ||
         ((gSaveContext.respawnFlag == 2) && (gSaveContext.respawn[RESPAWN_MODE_RETURN].playerParams ==
                                              PLAYER_PARAMS(0xFF, PLAYER_START_MODE_TELESCOPE)))) {

@@ -3590,3 +3590,14 @@ void OotPspAudio_Update(void) {
         OotPspAudioBackend_RunUpdates(OOT_PSP_AUDIO_MAX_UPDATES_NORMAL);
     }
 }
+
+int OotPspAudio_IsExternalPoolRange(const void* ptr, size_t size) {
+    uintptr_t addr = (uintptr_t)ptr;
+    uintptr_t poolStart = (uintptr_t)sAudioExternalPool;
+    uintptr_t poolEnd = poolStart + sizeof(sAudioExternalPool);
+
+    if ((ptr == NULL) || (size == 0) || (addr > UINTPTR_MAX - size)) {
+        return 0;
+    }
+    return (addr >= poolStart) && ((addr + size) <= poolEnd);
+}

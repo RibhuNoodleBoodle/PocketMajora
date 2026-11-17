@@ -179,6 +179,11 @@ void gfx_scegu_sync_texture_cache(void) {
 
 static unsigned int staticOffset = 0;
 unsigned int scegu_fog_color = 0;
+static bool sFogAdditiveBlend = false;
+
+void gfx_scegu_set_fog_additive(bool enabled) {
+    sFogAdditiveBlend = enabled;
+}
 
 static unsigned int getMemorySize(unsigned int width, unsigned int height, unsigned int psm) {
     switch (psm) {
@@ -1421,9 +1426,10 @@ static void gfx_scegu_apply_shader(struct ShaderProgram *prg) {
     }
 
     if (prg->shader_id & SHADER_OPT_TEXTURE_EDGE) {
-        // (horrible) alpha discard
+        // Match N64 CVG_X_ALPHA 50% coverage threshold so bilinear edges do not
+        // draw low-opacity border texels fully opaque.
         sceGuEnable(GU_ALPHA_TEST);
-        sceGuAlphaFunc(GU_GREATER, 0x55, 0xff); /* 0.3f  */
+        sceGuAlphaFunc(GU_GREATER, 0x7F, 0xff);
     } else if (prg->shader_id & SHADER_OPT_ALPHA_THRESHOLD) {
         /* OoT's threshold display lists use zero-alpha texels as holes. This
          * is especially important when a textured rectangle writes depth,
@@ -1938,7 +1944,11 @@ static void gfx_scegu_draw_fog_triangles(float buf_vbo[], size_t buf_vbo_len,
         sceGuDepthFunc(GU_EQUAL);
     }
     sceGuEnable(GU_BLEND);
-    sceGuBlendFunc(GU_ADD, GU_SRC_ALPHA, GU_ONE_MINUS_SRC_ALPHA, 0, 0);
+    if (sFogAdditiveBlend) {
+        sceGuBlendFunc(GU_ADD, GU_SRC_ALPHA, GU_FIX, 0, 0xFFFFFF);
+    } else {
+        sceGuBlendFunc(GU_ADD, GU_SRC_ALPHA, GU_ONE_MINUS_SRC_ALPHA, 0, 0);
+    }
     sceGuDrawArray(GU_TRIANGLES, vertexFormat, vertexCount, 0, buf);
 
     /* A two-texture material emits its two fog contributions back-to-back.
@@ -1948,6 +1958,10 @@ static void gfx_scegu_draw_fog_triangles(float buf_vbo[], size_t buf_vbo_len,
         return;
     }
 
+    if (sFogAdditiveBlend) {
+        sceGuBlendFunc(GU_ADD, GU_SRC_ALPHA, GU_ONE_MINUS_SRC_ALPHA, 0, 0);
+        sFogAdditiveBlend = false;
+    }
     sceGuDepthFunc(GU_GEQUAL);
     sceGuDepthMask(sDepthWriteEnabled ? GU_FALSE : GU_TRUE);
     if (useTextureAlpha) {

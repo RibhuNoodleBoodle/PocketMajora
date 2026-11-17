@@ -9,6 +9,7 @@
 #include "oot_psp_asset_loader.h"
 #include "oot_psp_audio_backend.h"
 #include "oot_psp_memory.h"
+#include "mm_psp_diag_log.h"
 #include "padmgr.h"
 #include "PR/os_internal_flash.h"
 #include "PR/os_voice.h"
@@ -28,6 +29,9 @@
 #define MM_PSP_NATIVE_ADDR_END 0x0C000000U
 #define MM_PSP_SEGMENTED_COLLISION_OFFSET_MAX 0x00010000U
 #define MM_PSP_SAVE_PATH "mm-psp-save.bin"
+#define MM_PSP_DIAG_LOG_PATH "mm-psp-diag.log"
+#define MM_PSP_DIAG_LOG_MAX_LINES 512U
+#define MM_PSP_DIAG_LOG_MAX_BYTES (64U * 1024U)
 #define MM_PSP_FLASH_SIZE 0x20000U
 #define MM_PSP_SAVE_IO_CHUNK_SIZE 0x4000U
 #define MM_PSP_ASSET_CACHE_BLOCK_COUNT 16
@@ -93,6 +97,91 @@ static uintptr_t sMmPspStackStart;
 static uintptr_t sMmPspStackEnd;
 static uintptr_t sMmPspStackAltStart;
 static uintptr_t sMmPspStackAltEnd;
+static s32 sMmPspDiagLogReady;
+static SceUID sMmPspDiagLogSema = -1;
+static u32 sMmPspDiagLogLines;
+static u32 sMmPspDiagLogBytes;
+static char sMmPspDiagLogPath[384];
+
+void MmPsp_DiagLogInit(void) {
+    SceUID fd;
+    const char* resolved;
+
+    if (sMmPspDiagLogReady) {
+        return;
+    }
+    if (sMmPspDiagLogSema < 0) {
+        sMmPspDiagLogSema = sceKernelCreateSema("MmPspDiagLog", 0, 1, 1, NULL);
+    }
+    resolved = OotPsp_ResolveRootPath(MM_PSP_DIAG_LOG_PATH, sMmPspDiagLogPath, sizeof(sMmPspDiagLogPath));
+    if (resolved == NULL || resolved[0] == '\0') {
+        return;
+    }
+    fd = sceIoOpen(sMmPspDiagLogPath, PSP_O_WRONLY | PSP_O_CREAT | PSP_O_TRUNC, 0777);
+    if (fd >= 0) {
+        static const char kHeader[] = "=== MM PSP Hardware Diagnostic Log ===\n";
+        sceIoWrite(fd, kHeader, sizeof(kHeader) - 1);
+        sceIoClose(fd);
+        sMmPspDiagLogBytes = sizeof(kHeader) - 1;
+        sMmPspDiagLogReady = true;
+    }
+}
+
+void MmPsp_DiagLog(const char* fmt, ...) {
+    char line[384];
+    int len;
+    va_list ap;
+
+    if (fmt == NULL) {
+        return;
+    }
+    va_start(ap, fmt);
+    len = vsnprintf(line, sizeof(line) - 2, fmt, ap);
+    va_end(ap);
+    if (len < 0) {
+        return;
+    }
+    if ((size_t)len >= sizeof(line) - 2) {
+        len = (int)(sizeof(line) - 2);
+    }
+    if (len == 0 || line[len - 1] != '\n') {
+        line[len++] = '\n';
+    }
+    line[len] = '\0';
+    printf("%s", line);
+
+    if (!sMmPspDiagLogReady) {
+        return;
+    }
+    if (sMmPspDiagLogLines >= MM_PSP_DIAG_LOG_MAX_LINES || sMmPspDiagLogBytes >= MM_PSP_DIAG_LOG_MAX_BYTES) {
+        return;
+    }
+    if (sMmPspDiagLogSema >= 0 && sceKernelWaitSema(sMmPspDiagLogSema, 1, NULL) < 0) {
+        return;
+    }
+    if (sMmPspDiagLogLines < MM_PSP_DIAG_LOG_MAX_LINES && sMmPspDiagLogBytes < MM_PSP_DIAG_LOG_MAX_BYTES) {
+        SceUID fd = sceIoOpen(sMmPspDiagLogPath, PSP_O_WRONLY | PSP_O_CREAT | PSP_O_APPEND, 0777);
+        if (fd >= 0) {
+            SceSSize written = sceIoWrite(fd, line, (SceSize)len);
+            sceIoClose(fd);
+            if (written > 0) {
+                sMmPspDiagLogBytes += (u32)written;
+            }
+        }
+        sMmPspDiagLogLines++;
+        if (sMmPspDiagLogLines == MM_PSP_DIAG_LOG_MAX_LINES || sMmPspDiagLogBytes >= MM_PSP_DIAG_LOG_MAX_BYTES) {
+            SceUID fdCap = sceIoOpen(sMmPspDiagLogPath, PSP_O_WRONLY | PSP_O_CREAT | PSP_O_APPEND, 0777);
+            if (fdCap >= 0) {
+                static const char kCap[] = "mm-psp diag log cap reached\n";
+                sceIoWrite(fdCap, kCap, sizeof(kCap) - 1);
+                sceIoClose(fdCap);
+            }
+        }
+    }
+    if (sMmPspDiagLogSema >= 0) {
+        sceKernelSignalSema(sMmPspDiagLogSema, 1);
+    }
+}
 
 static const char* MmPsp_GetSavePath(char* buffer, size_t bufferSize) {
     return OotPsp_ResolveRootPath(MM_PSP_SAVE_PATH, buffer, bufferSize);
@@ -250,6 +339,9 @@ static s32 MmPsp_IsKnownNativePointer(uintptr_t address, size_t size) {
         return true;
     }
     if (OotPsp_IsRuntimeByteRange((void*)address, size)) {
+        if (OotPspAudio_IsExternalPoolRange((const void*)address, size)) {
+            return false;
+        }
         return true;
     }
     return OotPsp_GetLoadedExternalAssetRangeFlags((void*)address, size, &flags);
@@ -277,8 +369,8 @@ static void MmPsp_LogUnmappedSegment(uintptr_t address, u32 segment) {
     static s32 logCount;
 
     if (logCount < 16) {
-        printf("mm-psp unmapped segment addr=%08lx segment=%lu offset=%06lx\n", (unsigned long)address,
-               (unsigned long)segment, (unsigned long)SEGMENT_OFFSET(address));
+        MmPsp_DiagLog("mm-psp unmapped segment addr=%08lx segment=%lu offset=%06lx", (unsigned long)address,
+                      (unsigned long)segment, (unsigned long)SEGMENT_OFFSET(address));
     }
     logCount++;
 }
@@ -357,8 +449,8 @@ static s32 MmPsp_DmaReadInternal(void* ram, uintptr_t vrom, size_t size, s32 aud
         return 0;
     }
 
-    printf("mm-psp dma failed ram=%p vrom=%08lx size=%lu status=%ld\n", ram, (unsigned long)vrom,
-           (unsigned long)size, (long)status);
+    MmPsp_DiagLog("mm-psp dma failed ram=%p vrom=%08lx size=%lu status=%ld", ram, (unsigned long)vrom,
+                  (unsigned long)size, (long)status);
     Fault_AddHungupAndCrash(__FILE__, __LINE__);
 }
 
@@ -857,15 +949,15 @@ void* MmPspAssetCache_Malloc(size_t size) {
         }
     }
     if (allocation == NULL) {
-        printf("mm-psp asset cache allocation table full size=%lu\n", (unsigned long)size);
+        MmPsp_DiagLog("mm-psp asset cache allocation table full size=%lu", (unsigned long)size);
         return NULL;
     }
 
     blockId = sceKernelAllocPartitionMemory(PSP_MEMORY_PARTITION_USER, "MM asset cache", PSP_SMEM_Low, size, NULL);
     if (blockId < 0) {
-        printf("mm-psp asset cache allocation failed size=%lu err=0x%08lx free=%lu largest=%lu\n",
-               (unsigned long)size, (unsigned long)blockId, (unsigned long)sceKernelTotalFreeMemSize(),
-               (unsigned long)sceKernelMaxFreeMemSize());
+        MmPsp_DiagLog("mm-psp asset cache allocation failed size=%lu err=0x%08lx free=%lu largest=%lu",
+                      (unsigned long)size, (unsigned long)blockId, (unsigned long)sceKernelTotalFreeMemSize(),
+                      (unsigned long)sceKernelMaxFreeMemSize());
         return NULL;
     }
 
@@ -915,8 +1007,13 @@ s32 MmPspGame_ReserveHeap(void) {
     printf("mm-psp startup: allocating 8 MiB game arena (free=%lu, largest=%lu)\n",
            (unsigned long)sceKernelTotalFreeMemSize(), (unsigned long)sceKernelMaxFreeMemSize());
     sMmPspSystemHeapBlockId =
-        sceKernelAllocPartitionMemory(PSP_MEMORY_PARTITION_USER, "MM 8 MiB game arena", PSP_SMEM_Low,
+        sceKernelAllocPartitionMemory(PSP_MEMORY_PARTITION_USER, "MM 8 MiB game arena", PSP_SMEM_High,
                                       MM_PSP_SYSTEM_HEAP_SIZE, NULL);
+    if (sMmPspSystemHeapBlockId < 0) {
+        sMmPspSystemHeapBlockId =
+            sceKernelAllocPartitionMemory(PSP_MEMORY_PARTITION_USER, "MM 8 MiB game arena", PSP_SMEM_Low,
+                                          MM_PSP_SYSTEM_HEAP_SIZE, NULL);
+    }
     if (sMmPspSystemHeapBlockId < 0) {
         printf("mm-psp startup: game arena allocation failed: 0x%08lx\n",
                (unsigned long)sMmPspSystemHeapBlockId);

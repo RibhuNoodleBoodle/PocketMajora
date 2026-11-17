@@ -11,7 +11,7 @@ MM PSP installation
    PSP/GAME/MM_PSP/data/basrom.z64. The ROM must be 32 MiB with CRC32 B428D8A7.
    The filename baserom.z64 is also accepted.
 
-3. Launch MM PSP Port from the PSP Game menu. On first launch, wait for ROM
+3. Launch pocketmajora from the PSP Game menu. On first launch, wait for ROM
    validation and asset conversion to finish. Later launches reuse the generated
    data/segments/oot_psp_assets.bin file.
 

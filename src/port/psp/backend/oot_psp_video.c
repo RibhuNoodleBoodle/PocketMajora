@@ -336,6 +336,18 @@ const char* OotPspVideo_GetAspectName(void) {
     return (sOotPspVideoAspect == OOT_PSP_VIDEO_ASPECT_4_3) ? "4:3" : "16:9";
 }
 
+float OotPspVideo_GetActiveAspectRatio(void) {
+    if ((sOotPspVideoActiveAspect == OOT_PSP_VIDEO_ASPECT_4_3) ||
+        ((sOotPspVideoActiveOutput == OOT_PSP_VIDEO_OUTPUT_TV) &&
+         (sOotPspVideoActiveResolution == OOT_PSP_VIDEO_RESOLUTION_240P))) {
+        return 4.0f / 3.0f;
+    }
+    if (sOotPspVideoActiveOutput == OOT_PSP_VIDEO_OUTPUT_TV) {
+        return 16.0f / 9.0f;
+    }
+    return 480.0f / 272.0f;
+}
+
 static void OotPspVideo_ResolveMode(OotPspVideoOutput output, OotPspVideoResolution resolution,
                                     OotPspVideoAspect aspect, OotPspVideoMode* mode) {
     int useTv = (output == OOT_PSP_VIDEO_OUTPUT_TV) && OotPspVideo_IsTvAvailable();

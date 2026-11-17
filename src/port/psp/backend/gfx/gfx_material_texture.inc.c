@@ -48,6 +48,14 @@ static struct RGBA gfx_material_read_texel(int slot, int x, int y, GfxTextureSwa
         uint16_t value = gfx_read_texture_source_be16(row, x * 2, swap);
         result = (struct RGBA){SCALE_5_8(value >> 11), SCALE_5_8((value >> 6) & 31),
                                SCALE_5_8((value >> 1) & 31), (value & 1) * 255};
+    } else if (tile->fmt == G_IM_FMT_IA && tile->siz == G_IM_SIZ_16b) {
+        uint8_t intensity = gfx_read_texture_source_u8(row, x * 2, swap);
+        uint8_t alpha = gfx_read_texture_source_u8(row, x * 2 + 1, swap);
+        result = (struct RGBA){intensity, intensity, intensity, alpha};
+    } else if (tile->fmt == G_IM_FMT_IA && tile->siz == G_IM_SIZ_4b) {
+        uint8_t part = gfx_texture_read_4b(slot, x, row, swap);
+        uint8_t intensity = ((part >> 1) * 255) / 7;
+        result = (struct RGBA){intensity, intensity, intensity, (part & 1) ? 255 : 0};
     } else {
         uint8_t value = tile->siz == G_IM_SIZ_4b ? gfx_texture_read_4b(slot, x, row, swap) * 17
                                                  : gfx_read_texture_source_u8(row, x, swap);
@@ -130,6 +138,13 @@ static bool gfx_prepare_material_texture(void) {
                  (((w0 >> 9) & 7) << 6) | (((w1 >> 9) & 7) << 9);
     key.alpha1 = ((w1 >> 21) & 7) | (((w1 >> 3) & 7) << 3) |
                  (((w1 >> 18) & 7) << 6) | ((w1 & 7) << 9);
+    /* Cycle-two SHADE alpha multiplies the fused texture's alpha per vertex.
+     * Strip it from the baked texture key when it is a pure COMBINED * SHADE. */
+    if (((((key.alpha1 & 7) == G_ACMUX_COMBINED) && (((key.alpha1 >> 6) & 7) == G_ACMUX_SHADE)) ||
+         (((key.alpha1 & 7) == G_ACMUX_SHADE) && (((key.alpha1 >> 6) & 7) == G_ACMUX_COMBINED))) &&
+        (((key.alpha1 >> 3) & 7) == G_ACMUX_0) && (((key.alpha1 >> 9) & 7) == G_ACMUX_0)) {
+        key.alpha1 = (G_ACMUX_COMBINED << 9);
+    }
     /* SHADE alpha varies across vertices; it cannot be baked into a tile. */
     for (int i = 0; i < 4; i++) {
         if (((key.alpha0 >> (3 * i)) & 7) == G_ACMUX_SHADE ||
@@ -156,7 +171,8 @@ static bool gfx_prepare_material_texture(void) {
         const TextureTileState* tile = gfx_get_texture_tile(i);
         if (!((tile->fmt == G_IM_FMT_RGBA && tile->siz == G_IM_SIZ_16b) ||
               (tile->fmt == G_IM_FMT_I && (tile->siz == G_IM_SIZ_4b || tile->siz == G_IM_SIZ_8b)) ||
-              (tile->fmt == G_IM_FMT_IA && tile->siz == G_IM_SIZ_8b)) ||
+              (tile->fmt == G_IM_FMT_IA &&
+               (tile->siz == G_IM_SIZ_4b || tile->siz == G_IM_SIZ_8b || tile->siz == G_IM_SIZ_16b))) ||
             ((tile->cms | tile->cmt) & G_TX_CLAMP)) return false;
         key.width[i] = gfx_texture_import_width(i);
         key.height[i] = gfx_texture_import_height(i);

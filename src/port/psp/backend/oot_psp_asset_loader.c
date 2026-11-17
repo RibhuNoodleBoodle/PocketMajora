@@ -3,6 +3,7 @@
 #include "oot_psp_audio_backend.h"
 #include "oot_psp_dve.h"
 #include "oot_psp_memory.h"
+#include "mm_psp_diag_log.h"
 #include "segment_symbols.h"
 
 #include <pspdmac.h>
@@ -1558,6 +1559,11 @@ static void OotPsp_StoreLoadedAssetSerialRange(uintptr_t ramStart, uintptr_t ram
     size_t insertIndex;
 
     if (sOotPspLoadedAssetSerialRangeCount >= OOT_PSP_LOADED_ASSET_RANGE_COUNT) {
+        if (sOotPspLoadedAssetSerialRangeIndexComplete) {
+            MmPsp_DiagLog("oot-psp serial range table full count=%lu ram=%08lx..%08lx",
+                          (unsigned long)sOotPspLoadedAssetSerialRangeCount,
+                          (unsigned long)ramStart, (unsigned long)ramEnd);
+        }
         sOotPspLoadedAssetSerialRangeIndexComplete = false;
         return;
     }

@@ -1,4 +1,5 @@
 #if PLATFORM_PSP
+#include "mm_psp_diag_log.h"
 #include "oot_psp_frame_interpolation.h"
 #endif
 /*
@@ -2593,6 +2594,10 @@ Actor* Actor_UpdateActor(UpdateActor_Params* params) {
         }
     } else {
         if (!Object_IsLoaded(&play->objectCtx, actor->objectSlot)) {
+#if PLATFORM_PSP
+            MmPsp_DiagLog("actor killed missing object actorId=0x%04x slot=%d objId=%d",
+                          actor->id, actor->objectSlot, play->objectCtx.slots[actor->objectSlot].id);
+#endif
             Actor_Kill(actor);
         } else if (((params->freezeExceptionFlag != 0) && !(actor->flags & params->freezeExceptionFlag)) ||
                    (((!params->freezeExceptionFlag) != 0) &&
@@ -3193,6 +3198,18 @@ void Actor_DrawAll(PlayState* play, ActorContext* actorCtx) {
                     Actor_Draw(play, actor);
                 }
             }
+#if PLATFORM_PSP
+            else if ((play->gameplayFrames > 30) && (actor->draw != NULL) && (actor->init != NULL)) {
+                static u16 sLoggedPendingActorId = 0xFFFF;
+                if (sLoggedPendingActorId != actor->id) {
+                    sLoggedPendingActorId = actor->id;
+                    MmPsp_DiagLog("actor draw skipped pending init frame=%lu actorId=0x%04x slot=%d objId=%d loaded=%d",
+                                  (unsigned long)play->gameplayFrames, actor->id, actor->objectSlot,
+                                  play->objectCtx.slots[actor->objectSlot].id,
+                                  Object_IsLoaded(&play->objectCtx, actor->objectSlot));
+                }
+            }
+#endif
 
             actor = actor->next;
         }

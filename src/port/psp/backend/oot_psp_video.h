@@ -54,6 +54,7 @@ void OotPspVideo_SetVSyncEnabled(int enabled);
 const char* OotPspVideo_GetOutputName(void);
 const char* OotPspVideo_GetResolutionName(void);
 const char* OotPspVideo_GetAspectName(void);
+float OotPspVideo_GetActiveAspectRatio(void);
 void OotPspVideo_GetMode(OotPspVideoMode* mode);
 void OotPspVideo_GetActiveMode(OotPspVideoMode* mode);
 

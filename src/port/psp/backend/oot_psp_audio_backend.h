@@ -108,5 +108,6 @@ void OotPspAudioBackend_ExecuteCommands(const Acmd* cmdList, s32 cmdCount);
 
 void OotPspAudio_Init(void);
 void OotPspAudio_Update(void);
+int OotPspAudio_IsExternalPoolRange(const void* ptr, size_t size);
 
 #endif

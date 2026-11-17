@@ -1,6 +1,9 @@
 #include "global.h"
 #include "z64shrink_window.h"
 #include "z64view.h"
+#if PLATFORM_PSP
+#include "oot_psp_video.h"
+#endif
 
 s32 View_ApplyPerspective(View* view);
 s32 View_ApplyOrtho(View* view);
@@ -336,7 +339,11 @@ s32 View_ApplyPerspective(View* view) {
 
     width = view->viewport.rightX - view->viewport.leftX;
     height = view->viewport.bottomY - view->viewport.topY;
+#if PLATFORM_PSP
+    aspect = ((f32)width / (f32)height) * (OotPspVideo_GetActiveAspectRatio() / (4.0f / 3.0f));
+#else
     aspect = (f32)width / (f32)height;
+#endif
 
     guPerspective(projection, &view->perspNorm, view->fovy, aspect, view->zNear, view->zFar, view->scale);
     view->projection = *projection;
@@ -481,7 +488,11 @@ s32 View_ApplyPerspectiveToOverlay(View* view) {
 
     width = view->viewport.rightX - view->viewport.leftX;
     height = view->viewport.bottomY - view->viewport.topY;
+#if PLATFORM_PSP
+    aspect = ((f32)width / (f32)height) * (OotPspVideo_GetActiveAspectRatio() / (4.0f / 3.0f));
+#else
     aspect = (f32)width / (f32)height;
+#endif
 
     guPerspective(projection, &view->perspNorm, view->fovy, aspect, view->zNear, view->zFar, view->scale);
 

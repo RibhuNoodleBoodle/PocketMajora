@@ -34,6 +34,7 @@ preamble = r'''
 static struct GfxPspLighting sBatchLighting;
 static bool sBatchUsesLighting;
 void gfx_scegu_set_lighting(const struct GfxPspLighting* state) { (void)state; }
+static void gfx_scegu_set_fog_additive(bool enabled) { (void)enabled; }
 struct RGBA { uint8_t r,g,b,a; };
 typedef struct { float u,v; struct RGBA color; float normal[3]; float x,y,z; } psp_fast_t;
 typedef struct { float u,v; uint8_t alpha; } psp_uv_t;
@@ -46,7 +47,7 @@ static uint8_t buf_vbo_fog_tex1_alpha[12];
 static size_t buf_vbo_len,buf_num_vert,buf_vbo_num_tris;
 static bool sBatchHasVisibleFog;
 static unsigned int sBatchDepthBias;
-struct ColorCombiner { int active_texture; } comb;
+struct ColorCombiner { int active_texture; bool texture_blend; } comb;
 struct TriPipelineState {
     bool two_texture_multiply, material_texture, color_add_prim, use_alpha;
     struct RGBA additive_color;
