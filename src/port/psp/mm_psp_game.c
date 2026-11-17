@@ -867,6 +867,7 @@ NORETURN void Fault_AddHungupAndCrashImpl(const char* exp1, const char* exp2) {
     snprintf(message, sizeof(message), "mm-psp fault: %s %s\n", exp1 != NULL ? exp1 : "(null)",
              exp2 != NULL ? exp2 : "(null)");
     MmPsp_FaultWrite(message);
+    MmPsp_DiagLog("%s", message);
     sceKernelExitGame();
     while (true) {
         sceKernelDelayThread(1000000);
@@ -878,6 +879,7 @@ NORETURN void Fault_AddHungupAndCrash(const char* file, s32 line) {
 
     snprintf(message, sizeof(message), "mm-psp fault at %s:%ld\n", file != NULL ? file : "(null)", (long)line);
     MmPsp_FaultWrite(message);
+    MmPsp_DiagLog("%s", message);
     sceKernelExitGame();
     while (true) {
         sceKernelDelayThread(1000000);

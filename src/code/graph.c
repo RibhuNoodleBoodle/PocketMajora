@@ -28,6 +28,7 @@ OSTime sGraphPrevUpdateEndTime;
 #include "overlays/gamestates/ovl_title/z_title.h"
 #include "z_title_setup.h"
 #if defined(TARGET_PSP) || defined(PLATFORM_PSP)
+#include "mm_psp_diag_log.h"
 #include "oot_psp_audio_backend.h"
 #include "oot_psp_frame_interpolation.h"
 #include "oot_psp_video.h"
@@ -311,20 +312,28 @@ void Graph_ExecuteAndDraw(GraphicsContext* gfxCtx, GameState* gameState) {
         }
     }
 
-    if (THGA_IsCrash(&gfxCtx->polyOpa)) {
-        problem = true;
-    }
-    if (THGA_IsCrash(&gfxCtx->polyXlu)) {
-        problem = true;
-    }
-    if (THGA_IsCrash(&gfxCtx->overlay)) {
-        problem = true;
-    }
-    if (THGA_IsCrash(&gfxCtx->work)) {
-        problem = true;
-    }
-    if (THGA_IsCrash(&gfxCtx->debug)) {
-        problem = true;
+    {
+        static const char* const sThgaNames[] = { "polyOpa", "polyXlu", "overlay", "work", "debug" };
+        TwoHeadGfxArena* thgas[] = {
+            &gfxCtx->polyOpa, &gfxCtx->polyXlu, &gfxCtx->overlay, &gfxCtx->work, &gfxCtx->debug,
+        };
+        static u8 sThgaCrashLoggedMask = 0;
+
+        for (size_t i = 0; i < ARRAY_COUNT(thgas); i++) {
+            if (THGA_IsCrash(thgas[i])) {
+                problem = true;
+#if defined(TARGET_PSP) || defined(PLATFORM_PSP)
+                if (!(sThgaCrashLoggedMask & (1U << i))) {
+                    sThgaCrashLoggedMask |= (u8)(1U << i);
+                    MmPsp_DiagLog("mm-psp thga crash buf=%s size=%lu rem=%ld", sThgaNames[i],
+                                  (unsigned long)thgas[i]->size, (long)THGA_GetRemaining(thgas[i]));
+                }
+#else
+                (void)sThgaNames;
+                (void)sThgaCrashLoggedMask;
+#endif
+            }
+        }
     }
 
     if (!problem) {

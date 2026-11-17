@@ -3,6 +3,7 @@
 #include "attributes.h"
 #include "audio.h"
 #include "dma.h"
+#include "mm_psp_diag_log.h"
 #include "oot_psp_asset_loader.h"
 #include "oot_psp_audio_commands.h"
 #include "oot_psp_me_entry.h"
@@ -1092,6 +1093,16 @@ static void OotPspAudioBackend_FallbackFromMe(const Acmd* cmdList, s32 cmdCount,
 #endif
 
     sAudioMeInitialized = false;
+    {
+        static u32 sFallbackLogged = 0;
+
+        if (sFallbackLogged < 8) {
+            sFallbackLogged++;
+            MmPsp_DiagLog("oot-psp audio me fallback state=%lu progress=0x%08lx cmd=%ld pending=%ld",
+                          (unsigned long)sAudioMeState, (unsigned long)sAudioMeProgress, (long)cmdCount,
+                          (long)sAudioMePendingSynthesis);
+        }
+    }
     AUDIO_DIAG_INCREMENT(sAudioDiagnosticCpuMixes);
     AUDIO_DIAG_INCREMENT(sAudioDiagnosticMeFallbacks);
 #if defined(OOTDEBUG)
