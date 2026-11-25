@@ -1,6 +1,7 @@
 #include "scheduler.h"
 
 #include "array_count.h"
+#include "mm_psp_trace.h"
 #include "oot_psp_performance.h"
 #include "oot_psp_renderer.h"
 #include "oot_psp_video.h"
@@ -25,11 +26,15 @@
 static u32 sNextGfxPresentationUsec;
 static u32 sGfxPacingRemainder;
 static s32 sGfxPacingInitialized;
+static u8 sConsecutiveOverrunTicks;
+static u8 sMultiPassHoldTicks;
 
 void SchedPsp_ResetGfxPacing(void) {
     sNextGfxPresentationUsec = 0;
     sGfxPacingRemainder = 0;
     sGfxPacingInitialized = 0;
+    sConsecutiveOverrunTicks = 0;
+    sMultiPassHoldTicks = 0;
 }
 
 
@@ -116,6 +121,37 @@ static inline u32 SchedPsp_GetFrameUsec(u32 updateRate) {
 }
 
 
+static inline u32 SchedPsp_GetPassCount(int presents, u32 updateRate) {
+    int fps;
+
+    if (!presents || !OotPspFrameInterpolation_HasSample()) {
+        return 1U;
+    }
+
+    fps = OotPspVideo_GetFrameRate();
+    if (fps == 60) {
+        return updateRate;
+    }
+    if (fps == 40 && updateRate > 1U) {
+        return 2U;
+    }
+    return 1U;
+}
+
+static inline u32 SchedPsp_GetPassUsec(u32 updateRate, u32 passes, u32 pass) {
+    if (passes > 1U && (updateRate % passes) != 0U) {
+        const u32 totalUsec = (OOT_PSP_FRAME_BASE_USEC * updateRate) +
+                              ((OOT_PSP_FRAME_REMAINDER * updateRate) / OOT_PSP_VI_RATE_HZ);
+        const u32 startUsec = (totalUsec * pass) / passes;
+        const u32 endUsec = (totalUsec * (pass + 1U)) / passes;
+
+        return endUsec - startUsec;
+    }
+
+    return SchedPsp_GetFrameUsec(updateRate / passes);
+}
+
+
 /*
  * Pace a graphics presentation before rendering.
  *
@@ -135,9 +171,8 @@ static inline u32 SchedPsp_GetFrameUsec(u32 updateRate) {
  * This prevents a slow frame from causing several subsequent frames to
  * run back-to-back at 100% CPU trying to catch up.
  */
-static void SchedPsp_PaceGfxTask(u32 updateRate) {
+static void SchedPsp_PaceGfxTask(u32 frameUsec) {
     const u32 now = sceKernelGetSystemTimeLow();
-    const u32 frameUsec = SchedPsp_GetFrameUsec(updateRate);
 
     /*
      * The first presentation establishes our pacing timeline.
@@ -208,24 +243,62 @@ void Sched_SendNotifyMsg(Scheduler* sc) {
             const u32 updateRate = SchedPsp_GetUpdateRate(task);
             /* Keep the original simulation interval. Only replay the immutable
              * display list; game and draw callbacks must run once per tick. */
-            const u32 passes = presents && OotPspVideo_GetFrameRate() == 60 &&
-                                       OotPspFrameInterpolation_HasSample() ? updateRate : 1;
+            const u32 configuredPasses = SchedPsp_GetPassCount(presents, updateRate);
+            u32 passes = configuredPasses;
+            u32 renderBusyUs = 0;
             u32 pass;
 
+            if (passes > 1U && sMultiPassHoldTicks > 0U) {
+                sMultiPassHoldTicks--;
+                passes = 1U;
+            }
+
             for (pass = 0; pass < passes; pass++) {
+                u32 renderStartUs;
+#if defined(MM_PSP_TRACE) && MM_PSP_TRACE
+                u64 passStartUs;
+                MmPspTrace_SetPassId((uint16_t)pass);
+#endif
                 if (presents) {
 #if defined(OOTDEBUG)
                     const u64 paceStartUsec = OotPspPerformance_Now();
 #endif
                     /* Pace before rendering so each intermediate frame has its
                      * own deadline. Overruns rebase without running catch-up ticks. */
-                    SchedPsp_PaceGfxTask(updateRate / passes);
+                    SchedPsp_PaceGfxTask(SchedPsp_GetPassUsec(updateRate, passes, pass));
 #if defined(OOTDEBUG)
                     OotPspPerformance_RecordPacing(OotPspPerformance_Now() - paceStartUsec);
 #endif
                 }
+#if defined(MM_PSP_TRACE) && MM_PSP_TRACE
+                passStartUs = MmPspTrace_BeginSpan(MM_TRACE_THREAD_MAIN, MM_TRACE_EVT_RENDER_PASS, 0,
+                                                   (u32)passes, 0, (u64)updateRate, (u64)presents);
+#endif
+                renderStartUs = sceKernelGetSystemTimeLow();
                 OotPspFrameInterpolation_SetFraction((float)(pass + 1) / (float)passes);
                 OotPspRenderer_RenderTask(&task->list);
+                renderBusyUs += (u32)SchedPsp_TimeDiff(sceKernelGetSystemTimeLow(), renderStartUs);
+#if defined(MM_PSP_TRACE) && MM_PSP_TRACE
+                MmPspTrace_EndSpan(MM_TRACE_THREAD_MAIN, MM_TRACE_EVT_RENDER_PASS, 0,
+                                   (u32)passes, 0, passStartUs, (u64)updateRate, (u64)presents);
+#endif
+            }
+            if (configuredPasses > 1U) {
+                const u32 tickBudgetUs = OOT_PSP_FRAME_BASE_USEC * updateRate;
+                if ((passes > 1U && (renderBusyUs + 5000U) > tickBudgetUs) ||
+                    (passes == 1U && (renderBusyUs * 2U + 6000U) > tickBudgetUs)) {
+                    if (sConsecutiveOverrunTicks < 255U) {
+                        sConsecutiveOverrunTicks++;
+                    }
+                    if (sConsecutiveOverrunTicks >= 3U) {
+                        sMultiPassHoldTicks = 20U;
+                    }
+                } else {
+                    sConsecutiveOverrunTicks = 0;
+                }
+            } else {
+                sConsecutiveOverrunTicks = 0;
+                sMultiPassHoldTicks = 0;
             }
             OotPspFrameInterpolation_SetFraction(1.0f);
             if (presents) {

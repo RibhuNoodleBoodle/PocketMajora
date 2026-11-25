@@ -14,5 +14,6 @@ void OotPspFrameInterpolation_Record(const void* address, const float value[4][4
 void OotPspFrameInterpolation_End(void);
 void OotPspFrameInterpolation_SetFraction(float fraction);
 void OotPspFrameInterpolation_Resolve(const void* address, float value[4][4]);
+void OotPsp_GuMtxF2LWithSite(const float mf[4][4], void* m, const void* site);
 
 #endif

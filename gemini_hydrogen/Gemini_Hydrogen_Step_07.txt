@@ -1,0 +1,88 @@
+Gemini Hydrogen | Step 07 | Sustain 40 moving renders and characterize LCD cadence
+Role: IMPLEMENTER for the existing PocketMajora PSP port.
+Run git rev-parse --show-toplevel and work in that root. Read
+gemini_hydrogen/ASTRA_ANALYSIS.txt, PERFORMANCE_BASELINE_AND_ACCEPTANCE.txt,
+Gemini_Hydrogen_Step_07.txt and HANDOFF.txt (all in gemini_hydrogen/) before editing.
+Prerequisite: 02, 03, 05 and 06 accepted or their measured residuals documented. Check the actual evidence and open gates.
+Goal: real 40 rendered FPS on PSP-3000 at correct MM tick rate, uninterrupted
+audio, timely visible assets, N64 effects and stable saves/memory. Implement
+only this milestone and its specific regression coverage.
+
+Start with git branch --show-current, git status --short, git log -1 --oneline
+and git diff. Preserve the dirty baseline including the user's 40 FPS, audio,
+asset and VFPU work. Pin the baseline binary and diff digest. Scope technical
+changes to the named active paths and prove that normal callers use them.
+
+Use src/code/game.c GameState_SetFramerateDivisor, src/code/graph.c
+Graph_TaskSet00/Graph_ExecuteAndDraw, src/port/psp/mm_psp_scheduler.c
+SchedPsp_GetPassCount/GetPassUsec/PaceGfxTask and Sched_SendNotifyMsg. Inspect
+backend/oot_psp_frame_interpolation.c End/Resolve, oot_psp_renderer.c
+OotPspRenderer_RenderTask, gfx/gfx_fast3d.c gfx_sp_triangles/import_texture,
+gfx/gfx_psp_submit.c gfx_psp_submit_draw_array and gfx/gfx_scegu.c
+gfx_scegu_complete_frame. Baseline already does two replay passes for a
+three-VI gameplay tick with eligible history. Distinguish CPU active time,
+GE queue wait, second-pass translation, culling, uploads, object update,
+deliberate pacing and cluster of missed refreshes at the same scene/room.
+
+Optimize the largest evidenced critical-path cost first. Reuse immutable
+DL decode or mesh data only with asset/segment/material generations, matrix
+fraction, palette and dynamic textures accounted for. If state flushes dominate
+batch eligible consecutive primitives while keeping alpha/Z and translucent
+order. If wait dominates, change the redundant wait without jeopardizing GE
+list, vertex or texture storage lifetime. If the simulation dominates, target
+the measured actor/collision/animation operation and compare deterministic
+tick results. Avoid changing broad optimization flags without an A/B result.
+Preserve audio service while CPU is busy. A fixed 25 ms sleep per frame on
+top of rendering time would miss the target.
+
+Use one simulation/input/event step per original tick. Check intermediate
+camera/actor/limb motion and particles for valid correspondences across
+teleport, new/dead actor, cutscene camera switch, pause/HOME/sleep and Song
+of Time. Invalidate stale history and draw current state on discontinuities.
+Never advance particle or feedback logic on a replay. Native one-VI UI
+keeps its own cadence. Verify two-VI behavior explicitly; its 40-mode rule
+currently requests two passes and can ask for 60/s in that state. Preserve
+source gameplay speed and document state-specific presentation rates.
+
+Run python3 tools/tests/test_psp_frame_pacing.py, test_psp_frame_interpolation.py,
+test_psp_ge_submit.py, test_psp_native_mesh.py and test_psp_vsync.py (all
+tools/tests/). Compare three cold and warm moving-route trials per contract.
+Report 40 rendered and distinct-latched frames/s goal separately, working
+mean <=25 ms, p50/p95/p99/max, slowest 10 s and refresh-hold histogram.
+Actual 60 Hz VSync alternates 1/2 refresh holds at 40. Record VSync-off tearing
+separately. Require equal stable tick hashes, zero audio/visibility regressions,
+and measured tail improvement beyond run variance. Quantify the bottleneck and
+remaining budget if the target cannot be attained with the full effects set.
+
+Execution, evidence and finish
+------------------------------
+Use the CI toolchain from .github/workflows/psp-build.yml (PSPDEV v20261001,
+VME-compatible ME core, intraFont, MIPS binutils, PyYAML/colorama). Build with
+./psp.sh VERSION=n64-us and run python3 tools/run_psp_tests.py after substantive
+changes. Run the targeted tests above as you iterate. Correct failures; retain
+exact command, output and tool versions for anything blocked. Test PPSSPP and
+PSP-3000 whenever available. Log the actual mixer, device and run settings.
+Repeat matched inputs at 20/40 FPS and compare clock, position, collisions,
+input edges, quest/cutscene triggers, animation and audio event timing. Check
+60 FPS compatibility. Preserve original effects, thresholds and test fixtures.
+Record crashes, missing effects, audible glitches, pop-ins, actor stalls and
+memory spikes even if unrelated to this patch.
+
+Keep raw before/after traces, configs, metrics and clip IDs under
+~/PocketMajora-evidence/step-07/{before,after}/<device>/<run>/; keep ROM,
+save images and derived assets private. Summarize measured results and paths in
+HANDOFF.txt and update relevant technical documentation for changed behavior.
+If a gate fails, label partial, give failing command, affected files, log and
+safe recovery action, then stop this milestone. Mark unavailable hardware
+tests pending. Never fill in a passing measurement. For rollback preserve a
+copy of this milestone's diff and restore only its hunks; after commit prefer
+a targeted revert that preserves subsequent/user work.
+
+On full acceptance use git status, stage only this milestone (git add -p for
+mixed files), inspect git diff --cached and test that the staged result is
+reproducible on its documented prerequisite. If inseparable from uncommitted
+user hunks, document the dependency and withhold the commit. Never reset,
+force-push or commit unrelated work. Commit message: perf(render): reduce measured work in 40 FPS presentation
+Run git log -1 --format=%H, record the actual accepted hash in the handoff
+after success. No passing commit for a blocked or rejected hypothesis.
+Next eligible work: 08.

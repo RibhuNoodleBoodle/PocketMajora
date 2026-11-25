@@ -1,6 +1,7 @@
 #include "global.h"
 #if defined(TARGET_PSP) || defined(PLATFORM_PSP)
 #include "mm_psp_diag_log.h"
+#include "mm_psp_trace.h"
 #include "oot_psp_asset_loader.h"
 void OotPsp_ResolveRoomList(RomFile* roomFiles, s32 count);
 #endif
@@ -85,23 +86,48 @@ void Object_UpdateEntries(ObjectContext* objectCtx) {
             s32 id = -entry->id;
 
             if (entry->dmaReq.vromAddr == 0) {
+#if PLATFORM_PSP
+                {
+                    u32 streamGen = OotPsp_AssetGetStreamGeneration();
+                    s32 k;
+                    for (k = i + 1; k < objectCtx->numEntries; k++) {
+                        if (objectCtx->slots[k].id < 0) {
+                            s32 nextId = -objectCtx->slots[k].id;
+                            size_t nextSize = gObjectTable[nextId].vromEnd - gObjectTable[nextId].vromStart;
+                            if (nextSize != 0) {
+                                OotPsp_AssetPrefetch(gObjectTable[nextId].vromStart, nextSize, streamGen,
+                                                     (u32)(k - i) * 2000U);
+                            }
+                        }
+                    }
+                }
+#endif
                 objectFile = &gObjectTable[id];
                 size = objectFile->vromEnd - objectFile->vromStart;
 
                 if (size == 0) {
-#if PLATFORM_PSP
+#if PLATFORM_PSP && (defined(OOTDEBUG) || (defined(MM_PSP_TRACE) && MM_PSP_TRACE))
                     MmPsp_DiagLog("object empty slot=%d id=%d", i, id);
 #endif
                     entry->id = 0;
                 } else {
+#if defined(TARGET_PSP) && defined(MM_PSP_TRACE) && MM_PSP_TRACE
+                    MmPspTrace_Record(MM_TRACE_THREAD_MAIN, MM_TRACE_EVT_OBJECT_REQ, MM_TRACE_FLAG_INSTANT,
+                                      (u32)id, 0, (u64)i, (u64)size);
+#endif
                     osCreateMesgQueue(&entry->loadQueue, &entry->loadMsg, 1);
                     DmaMgr_RequestAsync(&entry->dmaReq, entry->segment, objectFile->vromStart, size, 0,
                                         &entry->loadQueue, NULL);
                 }
-            } else if (!osRecvMesg(&entry->loadQueue, NULL, OS_MESG_NOBLOCK)) {
+            }
+            if ((entry->dmaReq.vromAddr != 0) && !osRecvMesg(&entry->loadQueue, NULL, OS_MESG_NOBLOCK)) {
                 entry->id = id;
-#if PLATFORM_PSP
+#if PLATFORM_PSP && (defined(OOTDEBUG) || (defined(MM_PSP_TRACE) && MM_PSP_TRACE))
                 MmPsp_DiagLog("object loaded slot=%d id=%d seg=%p", i, id, entry->segment);
+#endif
+#if defined(TARGET_PSP) && defined(MM_PSP_TRACE) && MM_PSP_TRACE
+                MmPspTrace_Record(MM_TRACE_THREAD_MAIN, MM_TRACE_EVT_OBJECT_READY, MM_TRACE_FLAG_INSTANT,
+                                  (u32)id, 0, (u64)i, (u64)(uintptr_t)entry->segment);
 #endif
             }
         }
@@ -174,10 +200,13 @@ void Scene_CommandSpawnList(PlayState* play, SceneCmd* cmd) {
     play->linkActorEntry =
         (ActorEntry*)Lib_SegmentedToVirtual(cmd->spawnList.segment) + play->setupEntranceList[play->curSpawn].spawn;
 #if PLATFORM_PSP
+    OotPsp_AssetBeginStreamGeneration();
+#if defined(OOTDEBUG) || (defined(MM_PSP_TRACE) && MM_PSP_TRACE)
     MmPsp_DiagLog("scene init id=%d entrance=0x%08lx spawn=%d cs=0x%04x form=%d objSpace=%p..%p",
                   play->sceneId, (unsigned long)gSaveContext.save.entrance, play->curSpawn,
                   (u16)gSaveContext.save.cutsceneIndex, (s32)GET_PLAYER_FORM,
                   play->objectCtx.spaceStart, play->objectCtx.spaceEnd);
+#endif
 #endif
     if ((PLAYER_GET_START_MODE(play->linkActorEntry) == PLAYER_START_MODE_TELESCOPE) ||
         ((gSaveContext.respawnFlag == 2) && (gSaveContext.respawn[RESPAWN_MODE_RETURN].playerParams ==
@@ -241,6 +270,18 @@ void Scene_CommandRoomList(PlayState* play, SceneCmd* cmd) {
     play->roomList.romFiles = Lib_SegmentedToVirtual(cmd->roomList.segment);
 #if defined(TARGET_PSP) || defined(PLATFORM_PSP)
     OotPsp_ResolveRoomList(play->roomList.romFiles, play->roomList.count);
+    {
+        u32 streamGen = OotPsp_AssetGetStreamGeneration();
+        s32 roomIdx;
+        s32 limit = (play->roomList.count < 5) ? play->roomList.count : 5;
+        for (roomIdx = 1; roomIdx < limit; roomIdx++) {
+            size_t roomSize = play->roomList.romFiles[roomIdx].vromEnd - play->roomList.romFiles[roomIdx].vromStart;
+            if (roomSize != 0) {
+                OotPsp_AssetPrefetch(play->roomList.romFiles[roomIdx].vromStart, roomSize, streamGen,
+                                     (u32)roomIdx * 8000U);
+            }
+        }
+    }
 #endif
 }
 
@@ -324,6 +365,15 @@ void Scene_CommandObjectList(PlayState* play, SceneCmd* cmd) {
 
     while (k < cmd->objectList.num) {
         nextPtr = func_8012F73C(&play->objectCtx, i, *objectEntry);
+#if PLATFORM_PSP
+        if (*objectEntry > 0) {
+            size_t objSize = gObjectTable[*objectEntry].vromEnd - gObjectTable[*objectEntry].vromStart;
+            if (objSize != 0) {
+                OotPsp_AssetPrefetch(gObjectTable[*objectEntry].vromStart, objSize, OotPsp_AssetGetStreamGeneration(),
+                                     (u32)(k + 1) * 1500U);
+            }
+        }
+#endif
 
         if (i < ARRAY_COUNT(play->objectCtx.slots) - 1) {
             firstObject[i + 1].segment = nextPtr;

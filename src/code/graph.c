@@ -29,9 +29,12 @@ OSTime sGraphPrevUpdateEndTime;
 #include "z_title_setup.h"
 #if defined(TARGET_PSP) || defined(PLATFORM_PSP)
 #include "mm_psp_diag_log.h"
+#include "mm_psp_trace.h"
 #include "oot_psp_audio_backend.h"
 #include "oot_psp_frame_interpolation.h"
+#include "oot_psp_performance.h"
 #include "oot_psp_video.h"
+#include "z64save.h"
 #endif
 
 void Graph_FaultClient(void) {
@@ -238,13 +241,60 @@ retry:
     Sched_SendNotifyMsg(&gScheduler);
 }
 
+#if defined(TARGET_PSP) && (defined(OOTDEBUG) || MM_PSP_TRACE)
+static u64 sGraphTickAudioUsec;
+#endif
+
+#if defined(TARGET_PSP) && MM_PSP_TRACE
+static u32 sGraphTraceTickId;
+static u16 sGraphTraceSceneEpoch;
+static s32 sGraphLastSceneId = -1;
+
+static u64 Graph_ComputeStableStateHash(const GameState* gameState, const PlayState* play) {
+    u64 h = 14695981039346656037ULL;
+    const u32* p;
+    u32 tmp[10];
+    size_t i;
+
+    tmp[0] = (u32)gameState->frames;
+    tmp[1] = (u32)gameState->framerateDivisor;
+    tmp[2] = play != NULL ? (u32)play->gameplayFrames : 0U;
+    tmp[3] = play != NULL ? (u32)play->sceneId : 0xFFFFFFFFU;
+    tmp[4] = play != NULL ? (u32)play->roomCtx.curRoom.num : 0xFFFFFFFFU;
+    tmp[5] = play != NULL ? (u32)play->csCtx.state : 0U;
+    tmp[6] = (u32)gSaveContext.save.time;
+    tmp[7] = (u32)gSaveContext.save.day;
+    tmp[8] = (u32)gSaveContext.save.saveInfo.playerData.health;
+    tmp[9] = (u32)gSaveContext.save.playerForm;
+    p = tmp;
+    for (i = 0; i < ARRAY_COUNT(tmp); i++) {
+        h ^= p[i];
+        h *= 1099511628211ULL;
+    }
+    return h;
+}
+#endif
+
 void Graph_UpdateGame(GameState* gameState) {
+#if defined(TARGET_PSP) && (defined(OOTDEBUG) || MM_PSP_TRACE)
+    u64 audioStartUsec = 0;
+#endif
     GameState_GetInput(gameState);
     GameState_IncrementFrameCount(gameState);
     if (R_AUDIOMGR_DEBUG_LEVEL < 3) {
+#if defined(TARGET_PSP) && defined(OOTDEBUG)
+        audioStartUsec = OotPspPerformance_Now();
+#elif defined(TARGET_PSP) && MM_PSP_TRACE
+        audioStartUsec = MmPspTrace_NowUs();
+#endif
         Audio_Update();
 #if defined(TARGET_PSP) || defined(PLATFORM_PSP)
         OotPspAudio_Update();
+#endif
+#if defined(TARGET_PSP) && defined(OOTDEBUG)
+        sGraphTickAudioUsec += OotPspPerformance_Now() - audioStartUsec;
+#elif defined(TARGET_PSP) && MM_PSP_TRACE
+        sGraphTickAudioUsec += MmPspTrace_NowUs() - audioStartUsec;
 #endif
     }
 }
@@ -255,6 +305,10 @@ void Graph_UpdateGame(GameState* gameState) {
  */
 void Graph_ExecuteAndDraw(GraphicsContext* gfxCtx, GameState* gameState) {
     u32 problem;
+#if defined(TARGET_PSP) && MM_PSP_TRACE
+    PlayState* tracePlay = gameState->main == Play_Main ? (PlayState*)gameState : NULL;
+    u64 simStartUs;
+#endif
 
     gameState->unk_A3 = 0;
     Graph_SetNextGfxPool(gfxCtx);
@@ -266,10 +320,26 @@ void Graph_ExecuteAndDraw(GraphicsContext* gfxCtx, GameState* gameState) {
                                       play ? play->roomCtx.curRoom.num : -1,
                                       play ? play->activeCamId : -1,
                                       play != NULL && play->pauseCtx.state == 0 &&
-                                          OotPspVideo_GetFrameRate() == 60);
+                                          OotPspVideo_GetFrameRate() > 20);
     }
 #endif
+#if defined(TARGET_PSP) && MM_PSP_TRACE
+    simStartUs = MmPspTrace_BeginSpan(MM_TRACE_THREAD_MAIN, MM_TRACE_EVT_TICK_SIM, 0,
+                                      (u32)(tracePlay != NULL ? tracePlay->gameplayFrames : gameState->frames),
+                                      0, (u64)gameState->framerateDivisor,
+                                      (u64)(tracePlay != NULL ? tracePlay->sceneId : -1));
+#endif
     GameState_Update(gameState);
+#if defined(TARGET_PSP) && MM_PSP_TRACE
+    MmPspTrace_EndSpan(MM_TRACE_THREAD_MAIN, MM_TRACE_EVT_TICK_SIM, 0,
+                       (u32)(tracePlay != NULL ? tracePlay->gameplayFrames : gameState->frames),
+                       0, simStartUs, (u64)gameState->framerateDivisor,
+                       (u64)(tracePlay != NULL ? tracePlay->roomCtx.curRoom.num : -1));
+    MmPspTrace_Record(MM_TRACE_THREAD_MAIN, MM_TRACE_EVT_STATE_HASH, MM_TRACE_FLAG_INSTANT,
+                      (u32)(tracePlay != NULL ? tracePlay->gameplayFrames : gameState->frames), 0,
+                      Graph_ComputeStableStateHash(gameState, tracePlay),
+                      (u64)(tracePlay != NULL ? tracePlay->sceneId : -1));
+#endif
 #if PLATFORM_PSP
     OotPspFrameInterpolation_End();
 #endif
@@ -360,10 +430,50 @@ void Graph_ExecuteAndDraw(GraphicsContext* gfxCtx, GameState* gameState) {
 }
 
 void Graph_Update(GraphicsContext* gfxCtx, GameState* gameState) {
+#if defined(TARGET_PSP) && (defined(OOTDEBUG) || MM_PSP_TRACE)
+    PlayState* play = gameState->main == Play_Main ? (PlayState*)gameState : NULL;
+    s32 sceneId = play != NULL ? play->sceneId : -1;
+    s32 roomId = play != NULL ? play->roomCtx.curRoom.num : -1;
+#endif
+#if defined(TARGET_PSP) && defined(OOTDEBUG)
+    u64 frameStartUsec = OotPspPerformance_Now();
+    u64 gameStartUsec;
+    u64 gameEndUsec;
+#endif
+#if defined(TARGET_PSP) && MM_PSP_TRACE
+    u64 traceStartUs;
+#endif
+
     gameState->unk_A3 = 0;
+#if defined(TARGET_PSP) && (defined(OOTDEBUG) || MM_PSP_TRACE)
+    sGraphTickAudioUsec = 0;
+#endif
+#if defined(TARGET_PSP) && defined(OOTDEBUG)
+    OotPspPerformance_BeginFrame(sceneId, roomId);
+    gameStartUsec = OotPspPerformance_Now();
+#endif
+#if defined(TARGET_PSP) && MM_PSP_TRACE
+    sGraphTraceTickId++;
+    if (sceneId != sGraphLastSceneId) {
+        sGraphLastSceneId = sceneId;
+        sGraphTraceSceneEpoch++;
+    }
+    MmPspTrace_SetTickContext(sGraphTraceTickId, sGraphTraceSceneEpoch, 0);
+    traceStartUs = MmPspTrace_BeginSpan(MM_TRACE_THREAD_MAIN, MM_TRACE_EVT_TICK_FRAME, 0,
+                                        (u32)sceneId, 0, (u64)roomId, (u64)gameState->framerateDivisor);
+#endif
 
     Graph_UpdateGame(gameState);
     Graph_ExecuteAndDraw(gfxCtx, gameState);
+
+#if defined(TARGET_PSP) && defined(OOTDEBUG)
+    gameEndUsec = OotPspPerformance_Now();
+    OotPspPerformance_EndFrame(gameEndUsec - gameStartUsec, sGraphTickAudioUsec, gameEndUsec - frameStartUsec);
+#endif
+#if defined(TARGET_PSP) && MM_PSP_TRACE
+    MmPspTrace_EndSpan(MM_TRACE_THREAD_MAIN, MM_TRACE_EVT_TICK_FRAME, 0,
+                       (u32)sceneId, 0, traceStartUs, (u64)roomId, sGraphTickAudioUsec);
+#endif
 }
 
 void Graph_ThreadEntry(void* arg) {

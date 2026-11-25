@@ -4,6 +4,7 @@
 #include "audio.h"
 #include "dma.h"
 #include "mm_psp_diag_log.h"
+#include "mm_psp_trace.h"
 #include "oot_psp_asset_loader.h"
 #include "oot_psp_audio_commands.h"
 #include "oot_psp_me_entry.h"
@@ -65,12 +66,13 @@ static volatile s32 sOotPspAudioInitialized = false;
 #error OOT_PSP_AUDIO_RECOVERY_CHUNKS must not exceed OOT_PSP_AUDIO_URGENT_CHUNKS
 #endif
 
-/* PSP priorities are lower-is-higher. Generation only outranks the game while
- * the immediately playable reserve is in the urgent region. */
+/* PSP priorities are lower-is-higher. Output and generation outrank the game
+ * thread (0x20) so 25-60ms graphics bursts cannot preemptively starve audio
+ * mixing into hardware underruns while ProducerThread waits on schedule/ME. */
 #define OOT_PSP_AUDIO_GAME_THREAD_PRIORITY     0x20
-#define OOT_PSP_AUDIO_OUTPUT_THREAD_PRIORITY   (OOT_PSP_AUDIO_GAME_THREAD_PRIORITY - 2)
-#define OOT_PSP_AUDIO_PRODUCER_THREAD_PRIORITY OOT_PSP_AUDIO_GAME_THREAD_PRIORITY
-#define OOT_PSP_AUDIO_PRODUCER_URGENT_PRIORITY (OOT_PSP_AUDIO_GAME_THREAD_PRIORITY - 1)
+#define OOT_PSP_AUDIO_OUTPUT_THREAD_PRIORITY   (OOT_PSP_AUDIO_GAME_THREAD_PRIORITY - 3)
+#define OOT_PSP_AUDIO_PRODUCER_THREAD_PRIORITY (OOT_PSP_AUDIO_GAME_THREAD_PRIORITY - 1)
+#define OOT_PSP_AUDIO_PRODUCER_URGENT_PRIORITY (OOT_PSP_AUDIO_GAME_THREAD_PRIORITY - 2)
 
 #define OOT_PSP_AUDIO_MAX_UPDATES_NORMAL 8
 #define OOT_PSP_AUDIO_MAX_UPDATES_CATCHUP 2
@@ -1733,14 +1735,19 @@ static u32 OotPspAudioBackend_ReportableFrames(void) {
     return buffered - targetFrames;
 }
 
-static s16 OotPspAudioBackend_LerpSample(s16 current, s16 next, u32 frac) {
-    s32 scaledFrac = frac >> (OOT_PSP_AUDIO_RESAMPLE_FRAC_BITS - OOT_PSP_AUDIO_LERP_FRAC_BITS);
-    s32 delta = ((s32)next - current) * scaledFrac;
+static inline s16 OotPspAudioBackend_LerpDelta(s16 current, s32 sampleDelta, s32 scaledFrac) {
+    s32 delta = sampleDelta * scaledFrac;
     s32 sign = delta >> 31;
 
     delta += ((1 << (OOT_PSP_AUDIO_LERP_FRAC_BITS - 1)) ^ sign) - sign;
 
-    return current + (delta >> OOT_PSP_AUDIO_LERP_FRAC_BITS);
+    return (s16)(current + (delta >> OOT_PSP_AUDIO_LERP_FRAC_BITS));
+}
+
+static s16 OotPspAudioBackend_LerpSample(s16 current, s16 next, u32 frac) {
+    s32 scaledFrac = (s32)(frac >> (OOT_PSP_AUDIO_RESAMPLE_FRAC_BITS - OOT_PSP_AUDIO_LERP_FRAC_BITS));
+
+    return OotPspAudioBackend_LerpDelta(current, (s32)next - current, scaledFrac);
 }
 
 static s16 OotPspAudioBackend_LerpHalfSample(s16 current, s16 next) {
@@ -1810,7 +1817,12 @@ typedef enum {
 } OotPspAudioUpdateResult;
 
 static OotPspAudioUpdateResult OotPspAudioBackend_TryRunUpdate(void) {
-    s32 publishImmediately;
+#if defined(MM_PSP_TRACE) && MM_PSP_TRACE
+    u64 prodStartUs = 0;
+    u64 meStartUs = 0;
+    u32 beforePlayable;
+    int meScoped = MmPspTrace_ScopeEnabled(MM_TRACE_SCOPE_ME_CMD);
+#endif
 
     if (!OotPspAudioBackend_CanRunUpdate()) {
         AUDIO_DIAG_SET(sAudioDiagnosticProducerState, OOT_PSP_AUDIO_PRODUCER_STATE_RING_FULL);
@@ -1825,17 +1837,36 @@ static OotPspAudioUpdateResult OotPspAudioBackend_TryRunUpdate(void) {
         return OOT_PSP_AUDIO_UPDATE_IO_BACKOFF;
     }
 
-    publishImmediately = OotPspAudioBackend_PlayableFrames() <=
-                         OotPspAudioBackend_UrgentBufferFrames();
+#if defined(MM_PSP_TRACE) && MM_PSP_TRACE
+    beforePlayable = OotPspAudioBackend_PlayableFrames();
+    prodStartUs = MmPspTrace_BeginSpan(MM_TRACE_THREAD_AUDIO_PROD, MM_TRACE_EVT_AUDIO_PRODUCER, 0,
+                                       0, 0, beforePlayable,
+                                       OotPspAudioBackend_TotalBufferedFrames());
+    if (meScoped) {
+        meStartUs = MmPspTrace_BeginSpan(MM_TRACE_THREAD_AUDIO_PROD, MM_TRACE_EVT_ME_CMD,
+                                         MM_TRACE_FLAG_SCOPED, 0, 0, 0, 0);
+    }
+#endif
     AUDIO_DIAG_SET(sAudioDiagnosticProducerState, OOT_PSP_AUDIO_PRODUCER_STATE_UPDATE);
     AudioThread_Update();
-    if (publishImmediately) {
-        /* The ME may finish quickly, but its ring position is not visible to
-         * AudioOut until Allegrex drains the completion. Under pressure wait
-         * on the completion semaphore now instead of losing a 60 Hz period. */
-        AUDIO_DIAG_SET(sAudioDiagnosticProducerState, OOT_PSP_AUDIO_PRODUCER_STATE_WAIT_ME);
-        OotPspAudioBackend_WaitForCommands();
+#if defined(MM_PSP_TRACE) && MM_PSP_TRACE
+    if (meScoped) {
+        MmPspTrace_EndSpan(MM_TRACE_THREAD_AUDIO_PROD, MM_TRACE_EVT_ME_CMD, MM_TRACE_FLAG_SCOPED,
+                           0, 0, meStartUs, (u64)sAudioMeCmdCount, 0);
     }
+#endif
+    /* The ME mixes in parallel while this producer thread waits on the
+     * completion semaphore, yielding Allegrex to the game thread. Draining
+     * completion now publishes sAudioWritePos as soon as the ME finishes
+     * instead of delaying publication until the next 60 Hz wakeup. */
+    AUDIO_DIAG_SET(sAudioDiagnosticProducerState, OOT_PSP_AUDIO_PRODUCER_STATE_WAIT_ME);
+    OotPspAudioBackend_WaitForCommands();
+#if defined(MM_PSP_TRACE) && MM_PSP_TRACE
+    MmPspTrace_EndSpan(MM_TRACE_THREAD_AUDIO_PROD, MM_TRACE_EVT_AUDIO_PRODUCER, 0,
+                       0, 0, prodStartUs,
+                       OotPspAudioBackend_PlayableFrames(),
+                       OotPspAudioBackend_TotalBufferedFrames());
+#endif
     AUDIO_DIAG_INCREMENT(sAudioDiagnosticUpdates);
     sceKernelRotateThreadReadyQueue(sceKernelGetThreadCurrentPriority());
     return OOT_PSP_AUDIO_UPDATE_COMPLETED;
@@ -1897,14 +1928,11 @@ static u32 OotPspAudioBackend_RenderOutputChunkState(u32 buffered, u32* readPosP
         u32* packedOut = (u32*)out;
         u32 current;
 
-        if (buffered <= 1) {
+        if (buffered == 0) {
             return 0;
         }
 
-        renderedPairs = buffered - 1;
-        if (renderedPairs > maxPairs) {
-            renderedPairs = maxPairs;
-        }
+        renderedPairs = buffered > maxPairs ? maxPairs : buffered;
 
         current = packedRing[readPos];
         for (i = 0; i < renderedPairs; i++) {
@@ -1914,11 +1942,8 @@ static u32 OotPspAudioBackend_RenderOutputChunkState(u32 buffered, u32* readPosP
             s16 halfLeft;
             s16 halfRight;
 
-            readPos++;
-            if (readPos == OOT_PSP_AUDIO_RING_FRAMES) {
-                readPos = 0;
-            }
-            next = packedRing[readPos];
+            readPos = (readPos + 1) & OOT_PSP_AUDIO_RING_MASK;
+            next = ((i + 1) < buffered) ? packedRing[readPos] : current;
             halfLeft = OotPspAudioBackend_LerpHalfSample(left, (s16)(u16)next);
             halfRight = OotPspAudioBackend_LerpHalfSample(right, (s16)(next >> 16));
 
@@ -1947,44 +1972,57 @@ static u32 OotPspAudioBackend_RenderOutputChunkState(u32 buffered, u32* readPosP
         return renderedPairs;
     }
 
-    if (buffered <= 1) {
+    if (buffered == 0) {
         return 0;
     }
 
-    for (i = 0; i < OOT_PSP_AUDIO_OUTPUT_CHUNK_FRAMES; i++) {
-        u32 ringOffset;
-        u32 nextRingOffset;
-        u32 advance;
-        s16 left;
-        s16 right;
+    {
+        const u32* packedRing = (const u32*)sAudioRing;
+        u32* packedOut = (u32*)out;
+        u32 curPacked = packedRing[readPos];
+        u32 nextPacked = (buffered > 1) ? packedRing[(readPos + 1) & OOT_PSP_AUDIO_RING_MASK] : curPacked;
+        s16 curLeft = (s16)(u16)curPacked;
+        s16 curRight = (s16)(curPacked >> 16);
+        s32 deltaLeft = (s32)(s16)(u16)nextPacked - curLeft;
+        s32 deltaRight = (s32)(s16)(nextPacked >> 16) - curRight;
 
-        if (buffered <= 1) {
-            break;
+        (void)OotPspAudioBackend_LerpSample;
+        for (i = 0; i < OOT_PSP_AUDIO_OUTPUT_CHUNK_FRAMES; i++) {
+            s32 scaledFrac = (s32)(resampleFrac >> (OOT_PSP_AUDIO_RESAMPLE_FRAC_BITS - OOT_PSP_AUDIO_LERP_FRAC_BITS));
+            s16 left = OotPspAudioBackend_LerpDelta(curLeft, deltaLeft, scaledFrac);
+            s16 right = OotPspAudioBackend_LerpDelta(curRight, deltaRight, scaledFrac);
+            u32 nextFrac = resampleFrac + resampleStep;
+            u32 advance = nextFrac >> OOT_PSP_AUDIO_RESAMPLE_FRAC_BITS;
+
+            *packedOut++ = (u16)left | ((u32)(u16)right << 16);
+            lastLeft = left;
+            lastRight = right;
+            resampleFrac = nextFrac & OOT_PSP_AUDIO_RESAMPLE_FRAC_MASK;
+
+            if (advance == 0) {
+                continue;
+            }
+
+            if (advance >= buffered) {
+                readPos = (readPos + buffered) & OOT_PSP_AUDIO_RING_MASK;
+                sourceFrames += buffered;
+                buffered = 0;
+                i++;
+                break;
+            }
+
+            readPos = (readPos + advance) & OOT_PSP_AUDIO_RING_MASK;
+            sourceFrames += advance;
+            buffered -= advance;
+
+            curPacked = (advance == 1) ? nextPacked : packedRing[readPos];
+            nextPacked = (buffered > 1) ? packedRing[(readPos + 1) & OOT_PSP_AUDIO_RING_MASK] : curPacked;
+            curLeft = (s16)(u16)curPacked;
+            curRight = (s16)(curPacked >> 16);
+            deltaLeft = (s32)(s16)(u16)nextPacked - curLeft;
+            deltaRight = (s32)(s16)(nextPacked >> 16) - curRight;
         }
-
-        ringOffset = readPos * OOT_PSP_AUDIO_CHANNELS;
-        nextRingOffset = ((readPos + 1) & OOT_PSP_AUDIO_RING_MASK) * OOT_PSP_AUDIO_CHANNELS;
-        left = OotPspAudioBackend_LerpSample(sAudioRing[ringOffset + 0], sAudioRing[nextRingOffset + 0],
-                                             resampleFrac);
-        right = OotPspAudioBackend_LerpSample(sAudioRing[ringOffset + 1], sAudioRing[nextRingOffset + 1],
-                                              resampleFrac);
-
-        *out++ = left;
-        *out++ = right;
-        lastLeft = left;
-        lastRight = right;
-
-        resampleFrac += resampleStep;
-        advance = resampleFrac >> OOT_PSP_AUDIO_RESAMPLE_FRAC_BITS;
-        resampleFrac &= OOT_PSP_AUDIO_RESAMPLE_FRAC_MASK;
-
-        if (advance > (buffered - 1)) {
-            advance = buffered - 1;
-        }
-
-        readPos = (readPos + advance) & OOT_PSP_AUDIO_RING_MASK;
-        sourceFrames += advance;
-        buffered -= advance;
+        out = (s16*)packedOut;
     }
 
     if (i < OOT_PSP_AUDIO_OUTPUT_CHUNK_FRAMES) {
@@ -2185,6 +2223,9 @@ static void OotPspAudioBackend_RunHardwareSrcOutput(void) {
 static int OotPspAudioBackend_OutputThread(UNUSED SceSize args, UNUSED void* argp) {
     u32 mixIndex = 0;
 
+#if defined(MM_PSP_TRACE) && MM_PSP_TRACE
+    MmPspTrace_RegisterThread(MM_TRACE_THREAD_AUDIO_OUT);
+#endif
     AUDIO_DIAG_SET(sAudioDiagnosticOutputState, OOT_PSP_AUDIO_OUTPUT_STATE_STARTING);
     if (sAudioHardwareSrc) {
         OotPspAudioBackend_RunHardwareSrcOutput();
@@ -2209,6 +2250,11 @@ static int OotPspAudioBackend_OutputThread(UNUSED SceSize args, UNUSED void* arg
         if (!sAudioPlaybackPrimed || (buffered < OotPspAudioBackend_SourceChunkFrames())) {
             if (sAudioPlaybackPrimed) {
                 AUDIO_DIAG_INCREMENT(sAudioDiagnosticUnderruns);
+#if defined(MM_PSP_TRACE) && MM_PSP_TRACE
+                MmPspTrace_Record(MM_TRACE_THREAD_AUDIO_OUT, MM_TRACE_EVT_AUDIO_UNDERRUN,
+                                  MM_TRACE_FLAG_INSTANT | MM_TRACE_FLAG_ERROR,
+                                  buffered, 0, buffered, OotPspAudioBackend_SourceChunkFrames());
+#endif
             }
             sAudioPlaybackPrimed = false;
             AUDIO_DIAG_SET(sAudioDiagnosticOutputState, OOT_PSP_AUDIO_OUTPUT_STATE_PRIMING);
@@ -2217,6 +2263,11 @@ static int OotPspAudioBackend_OutputThread(UNUSED SceSize args, UNUSED void* arg
         } else {
             sourceFrames = OotPspAudioBackend_RenderOutputChunk(mix);
             if (sourceFrames == 0) {
+#if defined(MM_PSP_TRACE) && MM_PSP_TRACE
+                MmPspTrace_Record(MM_TRACE_THREAD_AUDIO_OUT, MM_TRACE_EVT_AUDIO_UNDERRUN,
+                                  MM_TRACE_FLAG_INSTANT | MM_TRACE_FLAG_ERROR,
+                                  buffered, 1, buffered, OotPspAudioBackend_SourceChunkFrames());
+#endif
                 sAudioPlaybackPrimed = false;
                 OotPspAudioBackend_PrepareSilence(mix);
             }
@@ -2226,7 +2277,18 @@ static int OotPspAudioBackend_OutputThread(UNUSED SceSize args, UNUSED void* arg
          * be replaced. The other mix buffer remains untouched while playing. */
         sAudioPendingOutputFrames = sourceFrames;
         AUDIO_DIAG_SET(sAudioDiagnosticOutputState, OOT_PSP_AUDIO_OUTPUT_STATE_WAIT_HARDWARE);
-        ret = OotPspAudioBackend_OutputMix(mix);
+        {
+#if defined(MM_PSP_TRACE) && MM_PSP_TRACE
+            u64 outStartUs = MmPspTrace_BeginSpan(MM_TRACE_THREAD_AUDIO_OUT, MM_TRACE_EVT_AUDIO_OUTPUT,
+                                                  0, buffered, 0, buffered, sourceFrames);
+#endif
+            ret = OotPspAudioBackend_OutputMix(mix);
+#if defined(MM_PSP_TRACE) && MM_PSP_TRACE
+            MmPspTrace_EndSpan(MM_TRACE_THREAD_AUDIO_OUT, MM_TRACE_EVT_AUDIO_OUTPUT,
+                               (ret < 0) ? MM_TRACE_FLAG_ERROR : 0,
+                               buffered, 0, outStartUs, sourceFrames, (uint64_t)(int64_t)ret);
+#endif
+        }
         if (ret >= 0) {
             sAudioOutputFrames = sourceFrames;
             sAudioPendingOutputFrames = 0;
@@ -2254,6 +2316,9 @@ static int OotPspAudioBackend_ProducerThread(UNUSED SceSize args, UNUSED void* a
     u32 nextUpdateUsec;
     s32 priorityBoosted = false;
 
+#if defined(MM_PSP_TRACE) && MM_PSP_TRACE
+    MmPspTrace_RegisterThread(MM_TRACE_THREAD_AUDIO_PROD);
+#endif
     AUDIO_DIAG_SET(sAudioDiagnosticProducerState, OOT_PSP_AUDIO_PRODUCER_STATE_PRIMING);
     OotPspAudioBackend_RunUpdatesTo(OOT_PSP_AUDIO_MAX_UPDATES_PRIME,
                                     OotPspAudioBackend_StartupBufferFrames());
@@ -2308,14 +2373,20 @@ static int OotPspAudioBackend_ProducerThread(UNUSED SceSize args, UNUSED void* a
             }
         }
 
-        if (missedUpdate) {
+        if (missedUpdate || (playableFrames < OotPspAudioBackend_UrgentBufferFrames())) {
             AUDIO_DIAG_SET(sAudioDiagnosticProducerState, OOT_PSP_AUDIO_PRODUCER_STATE_CATCHUP);
-            AUDIO_DIAG_INCREMENT(sAudioDiagnosticCatchups);
+            if (missedUpdate) {
+                AUDIO_DIAG_INCREMENT(sAudioDiagnosticCatchups);
+            }
             if (OotPspAudioBackend_RunScheduledUpdate(nextUpdateUsec + OOT_PSP_AUDIO_UPDATE_USEC) ==
                 OOT_PSP_AUDIO_UPDATE_COMPLETED) {
                 u32 update;
+                u32 targetFrames = OotPspAudioBackend_TargetBufferFrames();
 
-                for (update = 1; update < OOT_PSP_AUDIO_MAX_UPDATES_CATCHUP; update++) {
+                for (update = 1;
+                     (update < OOT_PSP_AUDIO_MAX_UPDATES_CATCHUP) &&
+                     (OotPspAudioBackend_TotalBufferedFrames() < targetFrames);
+                     update++) {
                     if (OotPspAudioBackend_TryRunUpdate() != OOT_PSP_AUDIO_UPDATE_COMPLETED) {
                         break;
                     }
@@ -3562,6 +3633,8 @@ void OotPspAudio_Init(void) {
         if (threadResult < 0) {
             printf("[audio!] thread restart failed err=%ld\n", (long)threadResult);
         }
+#else
+        (void)threadResult;
 #endif
         return;
     }

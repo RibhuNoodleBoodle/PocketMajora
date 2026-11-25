@@ -68,20 +68,23 @@ static int sFrameVSync;
 static void OotPspVideoThread_Submit(void (*complete)(void)) { complete(); }
 static void sceGuFinish(void) { record('F'); }
 static void sceGuSync(int a,int b) { (void)a;(void)b;record('S'); }
-static void sceDisplayWaitVblankStart(void) {
-    record('W'); waits++;
-    if (queued) { scanout=queued; queued=NULL; }
-}
+static int failGet, failSet, stuckFront;
 static int sceDisplayGetFrameBuf(void** address,int* width,int* format,int sync) {
     (void)width;(void)format;(void)sync;
+    if (failGet) return -1;
     // Exercise the alias returned by some display drivers.
     *address=(void*)((uintptr_t)scanout|0x40000000U); return 0;
 }
 static int sceDisplaySetFrameBuf(void* address,int width,int format,int sync) {
     (void)width;(void)format;
+    if (failSet) return -1;
     if (sync==PSP_DISPLAY_SETBUF_NEXTFRAME) { queued=address; record('Q'); }
     else { scanout=address; queued=NULL; record('I'); }
     return 0;
+}
+static void sceDisplayWaitVblankStart(void) {
+    record('W'); waits++;
+    if (queued && !stuckFront) { scanout=queued; queued=NULL; }
 }
 static void gfx_scegu_present_interlaced(void) { record('P'); }
 static void* sceGuSwapBuffers(void) { record('B');return sDisplayBuffer; }
@@ -96,8 +99,12 @@ int main(void) {
     assert(OotPspVideo_IsVSyncEnabled());
     assert(OotPspVideo_GetFrameRate()==20);
     sVideoSelectedIndex=OOT_PSP_VIDEO_MENU_ROW_FPS;
+    OotPspHomeMenu_AdjustVideoRow(1); assert(OotPspVideo_GetFrameRate()==40);
     OotPspHomeMenu_AdjustVideoRow(1); assert(OotPspVideo_GetFrameRate()==60);
     OotPspHomeMenu_ActivateVideoRow(); assert(OotPspVideo_GetFrameRate()==20);
+    OotPspHomeMenu_AdjustVideoRow(-1); assert(OotPspVideo_GetFrameRate()==60);
+    OotPspHomeMenu_AdjustVideoRow(-1); assert(OotPspVideo_GetFrameRate()==40);
+    OotPspHomeMenu_AdjustVideoRow(-1); assert(OotPspVideo_GetFrameRate()==20);
     OotPspVideo_SetFrameRate(60);
     sVideoSelectedIndex=OOT_PSP_VIDEO_MENU_ROW_VSYNC;
     OotPspHomeMenu_AdjustVideoRow(-1); assert(!OotPspVideo_IsVSyncEnabled());
@@ -116,8 +123,13 @@ int main(void) {
     config("[video]\noutput = lcd\naspect = 4:3\n"); // Older files retain the new default.
     assert(OotPspVideo_IsVSyncEnabled() && strcmp(OotPspVideo_GetAspectName(),"4:3")==0);
     assert(OotPspVideo_GetFrameRate()==20);
+    config("fps = 40\n"); assert(OotPspVideo_GetFrameRate()==40);
+    assert(OotPspVideo_Save()==0);
+    OotPspVideo_SetFrameRate(20); OotPspVideo_Init("EBOOT.PBP");
+    assert(OotPspVideo_GetFrameRate()==40);
     config("fps = 60\n"); assert(OotPspVideo_GetFrameRate()==60);
     config("fps = 600\n"); assert(OotPspVideo_GetFrameRate()==20);
+    OotPspVideo_SetFrameRate(40); assert(OotPspVideo_GetFrameRate()==40);
     OotPspVideo_SetFrameRate(30); assert(OotPspVideo_GetFrameRate()==20);
     for (unsigned enabled=0;enabled<2;enabled++) for (unsigned interlaced=0;interlaced<2;interlaced++) {
         OotPspVideo_SetVSyncEnabled(enabled); sInterlacedOutput=interlaced;
@@ -169,7 +181,25 @@ int main(void) {
     sBufferWidth=512; sScreenHeight=240; sInterlacedOutput=false;
     gfx_scegu_reset_framebuffers(); assert(sColorBufferCount==3 && staticOffset<4*1024*1024);
     assert(sPendingBuffer==NULL && sDrawBuffer==sPrimaryBuffer && sDisplayBuffer==sSecondaryBuffer);
-    puts("Video: defaults, 20/60 FPS save/load, HOME controls, double/triple buffer ownership and VSync passed");
+    // Fault recovery: rejected SetFrameBuf, failing GetFrameBuf, and stuck old front
+    // must terminate within bounded vblanks and never overwrite live front/display buffers.
+    sColorBufferCount=3; sInterlacedOutput=false;
+    sColorBuffers[0]=(void*)1; sColorBuffers[1]=(void*)2; sColorBuffers[2]=(void*)3;
+    sDrawBuffer=(void*)1; sDisplayBuffer=scanout=(void*)2; sPendingBuffer=queued=NULL;
+    OotPspVideo_SetVSyncEnabled(1);
+    failSet=1; waits=0; traceLength=0; gfx_scegu_end_frame();
+    assert(sPendingBuffer==NULL && sDisplayBuffer==(void*)2 && sDrawBuffer!=(void*)2 && sDrawBuffer!=scanout);
+    failSet=0;
+    // Queue a pending frame, then hold front stuck across multiple calls.
+    traceLength=0; gfx_scegu_end_frame(); assert(sPendingBuffer!=NULL);
+    stuckFront=1; waits=0; gfx_scegu_end_frame();
+    assert(waits<=4 && sDrawBuffer!=scanout && sDrawBuffer!=sDisplayBuffer);
+    stuckFront=0; scanout=sDisplayBuffer; queued=NULL;
+    // Failing front query during triple-buffer presentation still terminates safely.
+    failGet=1; waits=0; gfx_scegu_end_frame();
+    assert(waits<=4 && sDrawBuffer!=sDisplayBuffer);
+    failGet=0;
+    puts("Video: defaults, 20/40/60 FPS save/load, HOME controls, double/triple buffer ownership and VSync passed");
 }
 '''
 defines = "\n".join(re.findall(r"^#define OOT_PSP_VIDEO_MENU_ROW_.*", menu, re.M)) + "\n"

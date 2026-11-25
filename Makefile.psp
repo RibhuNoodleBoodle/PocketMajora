@@ -38,6 +38,8 @@ PSP_AUDIO_HARDWARE_SRC ?= 0
 PSP_AUDIO_DIAGNOSTICS ?= 0
 PSP_WAKE_DIAGNOSTICS ?= 0
 PSP_GFX_DIAGNOSTICS ?= 0
+PSP_TRACE ?= 0
+PSP_TRACE_SCOPES ?= 0x1F
 PSP_AUDIO_MIXER_VME ?= 1
 PSP_AUDIO_MIXER_FAST ?= 1
 PSP_AUDIO_MIXER_VERIFY ?= 0
@@ -61,6 +63,8 @@ PSP_COMMON_DEFINES := \
 	-DOOT_PSP_AUDIO_DIAGNOSTICS=$(PSP_AUDIO_DIAGNOSTICS) \
 	-DOOT_PSP_WAKE_DIAGNOSTICS=$(PSP_WAKE_DIAGNOSTICS) \
 	-DOOT_PSP_GFX_DIAGNOSTICS=$(PSP_GFX_DIAGNOSTICS) \
+	-DMM_PSP_TRACE=$(PSP_TRACE) \
+	-DMM_PSP_TRACE_SCOPES=$(PSP_TRACE_SCOPES) \
 	-DOOT_PSP_USE_INTRAFONT=1 \
 	-DF3DEX_GBI_2 \
 	-DF3DEX_GBI_PL \
@@ -127,7 +131,8 @@ PSP_PLATFORM_SOURCES := \
 	src/port/psp/mm_psp_matrix.c \
 	src/port/psp/mm_psp_path.c \
 	src/port/psp/mm_psp_gfx_scegu.c \
-	src/port/psp/mm_psp_scheduler.c
+	src/port/psp/mm_psp_scheduler.c \
+	src/port/psp/mm_psp_trace.c
 
 PSP_PROBE_SOURCE := src/port/psp/mm_psp_probe.c
 
@@ -313,13 +318,45 @@ $(PSP_BUILD_DIR)/backend/oot_psp_me_suspend.o: $(PSP_BACKEND_ROOT)/oot_psp_me_su
 		-ffunction-sections -fdata-sections -fno-exceptions -fno-rtti -fno-unwind-tables \
 		-I$(PSP_SDK)/include -I$(PSP_PREFIX)/include -o $@ $<
 
+$(PSP_BUILD_DIR)/backend/gfx/gfx_cc.o \
 $(PSP_BUILD_DIR)/backend/gfx/gfx_fast3d.o \
+$(PSP_BUILD_DIR)/backend/gfx/gfx_psp_submit.o \
+$(PSP_BUILD_DIR)/backend/gfx/psp_texture_manager.o \
+$(PSP_BUILD_DIR)/backend/oot_psp_asset_loader.o \
 $(PSP_BUILD_DIR)/backend/oot_psp_audio_backend.o \
+$(PSP_BUILD_DIR)/backend/oot_psp_frame_interpolation.o \
+$(PSP_BUILD_DIR)/backend/oot_psp_memory.o \
 $(PSP_BUILD_DIR)/backend/oot_psp_mixer.o \
+$(PSP_BUILD_DIR)/backend/oot_psp_renderer.o \
+$(PSP_BUILD_DIR)/src/port/psp/mm_psp_gfx_scegu.o \
+$(PSP_BUILD_DIR)/src/port/psp/mm_psp_matrix.o \
+$(PSP_BUILD_DIR)/src/port/psp/mm_psp_scheduler.o \
+$(PSP_BUILD_DIR)/src/audio/lib/heap.o \
+$(PSP_BUILD_DIR)/src/audio/lib/load.o \
 $(PSP_BUILD_DIR)/src/audio/lib/playback.o \
 $(PSP_BUILD_DIR)/src/audio/lib/seqplayer.o \
 $(PSP_BUILD_DIR)/src/audio/lib/synthesis.o \
-$(PSP_BUILD_DIR)/src/audio/lib/thread.o: PSP_CFLAGS += -O3 -finline-functions
+$(PSP_BUILD_DIR)/src/audio/lib/thread.o \
+$(PSP_BUILD_DIR)/src/code/c_keyframe.o \
+$(PSP_BUILD_DIR)/src/code/graph.o \
+$(PSP_BUILD_DIR)/src/code/sys_math.o \
+$(PSP_BUILD_DIR)/src/code/sys_math3d.o \
+$(PSP_BUILD_DIR)/src/code/sys_math_atan.o \
+$(PSP_BUILD_DIR)/src/code/sys_matrix.o \
+$(PSP_BUILD_DIR)/src/code/z_actor.o \
+$(PSP_BUILD_DIR)/src/code/z_bgcheck.o \
+$(PSP_BUILD_DIR)/src/code/z_camera.o \
+$(PSP_BUILD_DIR)/src/code/z_collision_check.o \
+$(PSP_BUILD_DIR)/src/code/z_effect_soft_sprite.o \
+$(PSP_BUILD_DIR)/src/code/z_lib.o \
+$(PSP_BUILD_DIR)/src/code/z_lights.o \
+$(PSP_BUILD_DIR)/src/code/z_play.o \
+$(PSP_BUILD_DIR)/src/code/z_room.o \
+$(PSP_BUILD_DIR)/src/code/z_skelanime.o \
+$(PSP_BUILD_DIR)/src/code/z_skin.o \
+$(PSP_BUILD_DIR)/src/code/z_skin_awb.o \
+$(PSP_BUILD_DIR)/src/code/z_skin_matrix.o \
+$(PSP_BUILD_DIR)/src/code/z_view.o: PSP_CFLAGS += -O3 -finline-functions
 
 $(PSP_BUILD_DIR)/backend/%.o: $(PSP_BACKEND_ROOT)/%.c
 	@mkdir -p $(dir $@)

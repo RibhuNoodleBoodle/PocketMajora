@@ -1,0 +1,206 @@
+PocketMajora engineering handoff | analysis-only
+2026-11-24 17:50 UTC | Repository and initial environment inventory complete.
+Root /mnt/6421-8598/building/PocketMajora
+Branch main, HEAD d3414c6b6c3acd0b9f932cb31066296746b767ba.
+Pre-existing tracked changes affect Makefile.psp, docs/psp-port.md, MM audio,
+graph, matrices, PSP renderer, loader, audio, settings, scheduler and two tests.
+Pre-existing untracked entries include the master prompt, hydrogen_fixes/, mm-sc/.
+Preserve all. Read git diff before staging anything. No implementation commit.
+Verified C/Allegrex/PSPSDK runtime. 40 FPS display-list replay already exists.
+Original host run 41/42; missing PSP tools for ELF layout check. No target FPS,
+audio, memory or parity capture yet. Target 40 rendered/s, 25 ms mean interval
+with proper game speed. Existing build products have unverified provenance.
+Created HANDOFF.txt. Pending analysis, baseline, parity, references, index and
+numbered prompts. Next action: trace runtime and verify available tooling.
+
+Tue Nov 24 17:52:02 UTC 2026 | Critical path and environment traced. main -> AssetInit -> Graph_Update; DmaMgr_RequestAsync reads inline; AudioOut/AudioGen are separate threads. Snap PPSSPP 1.20.4 contains a historic 64-line log; no hardware connected. Next: analysis and baseline.
+2026-11-24 17:53:38 UTC
+ASTRA_ANALYSIS.txt written. Runtime flow, memory budgets and seven falsifiable risk groups recorded.
+Next action: Write acceptance and capture protocol.
+2026-11-24 17:54:50 UTC
+PERFORMANCE_BASELINE_AND_ACCEPTANCE.txt written. Baseline separates host, emulator history, theoretical limits and hardware gates.
+Next action: Write feature parity matrix.
+2026-11-24 17:55:46 UTC
+N64_GRAPHICS_PARITY_MATRIX.txt written. Twelve visual cases mapped to draw paths and tests.
+Next action: Write verified reference ledger and ranked index.
+2026-11-24 17:56:07 UTC
+RESEARCH_REFERENCES.txt written. Reference versions and emulator ME limitation documented.
+Next action: Write dependency index then eight worker prompts.
+2026-11-24 17:56:33 UTC
+IMPLEMENTATION_INDEX.txt written. Nine milestones selected; save integrity and final soak have separate gates.
+Next action: Write standalone Steps 01 through 09, updating handoff after each.
+2026-11-24 17:57:35 UTC
+Gemini_Hydrogen_Step_01.txt written. Establish MM timing and readiness telemetry prompt complete.
+Next action: Write Step 02.
+2026-11-24 17:57:35 UTC
+Gemini_Hydrogen_Step_02.txt written. Prevent audible breaks at the first missed producer deadline prompt complete.
+Next action: Write Step 03.
+2026-11-24 17:57:35 UTC
+Gemini_Hydrogen_Step_03.txt written. Recover failed LCD presentation without releasing live buffers prompt complete.
+Next action: Write Step 04.
+2026-11-24 17:58:16 UTC
+Gemini_Hydrogen_Step_04.txt written. Preserve the previous flash save across failed updates prompt complete.
+Next action: Write Step 05.
+2026-11-24 17:58:16 UTC
+Gemini_Hydrogen_Step_05.txt written. Deliver packed ranges before audio and scene deadlines prompt complete.
+Next action: Write Step 06.
+2026-11-24 17:58:16 UTC
+Gemini_Hydrogen_Step_06.txt written. Remove actor pop-in without changing simulation activation prompt complete.
+Next action: Write Step 07.
+2026-11-24 17:59:04 UTC
+Gemini_Hydrogen_Step_07.txt written. Sustain 40 moving renders and characterize LCD cadence prompt complete.
+Next action: Write Step 08.
+2026-11-24 17:59:04 UTC
+Gemini_Hydrogen_Step_08.txt written. Correct demonstrated N64 visual differences prompt complete.
+Next action: Write Step 09.
+2026-11-24 17:59:04 UTC
+Gemini_Hydrogen_Step_09.txt written. Validate on PSP-3000 and close the recovery and performance gates prompt complete.
+Next action: Validate all outputs, reconcile Git state and finalize handoff.
+
+FINAL CHECKPOINT | 2026-11-24 UTC
+Analysis and planning complete. All 15 files validated as plain text; all named
+host test scripts resolved in tools/tests. No runtime source edited or commit
+created by Astra. HEAD remains main d3414c6b6c3acd0b9f932cb31066296746b767ba.
+The 20 original tracked modifications remain. Final status also shows untracked
+master prompt, gemini_hydrogen/ and mm-sc/. The initially observed untracked
+hydrogen_fixes/ no longer appeared in the final listing; this analysis did not
+move or remove it. Recheck the working tree before making changes.
+
+Completed: ASTRA_ANALYSIS.txt, PERFORMANCE_BASELINE_AND_ACCEPTANCE.txt,
+N64_GRAPHICS_PARITY_MATRIX.txt, RESEARCH_REFERENCES.txt, IMPLEMENTATION_INDEX.txt,
+HANDOFF.txt and Gemini_Hydrogen_Step_01.txt through Gemini_Hydrogen_Step_09.txt.
+Pending planning files: none. Pending implementation gates: all nine.
+Execution path, source evidence, allocations and the blocking-site list are
+in ASTRA_ANALYSIS.txt; the baseline ledger includes emulator binary hash,
+scene sequence and memory observations. A prior ELF dependency file points
+to /tmp/pspdev/psp/sdk/include/pspaudio.h, unavailable at final inspection.
+Open questions: largest real-PSP critical path, cause of the first dropout,
+cause of any specific pop-in, parity mismatches, actual RAM/VRAM headroom,
+successful display/save recovery and achievable steady unique FPS. No PSP-3000
+performance claim. The initial static risk ordering is revisable by evidence.
+
+NEXT ACTION FOR GEMINI HYDROGEN: from the repository, run
+  git rev-parse --show-toplevel
+Read gemini_hydrogen/Gemini_Hydrogen_Step_01.txt and execute it as implementer.
+Start in this working tree, inspect the diff, provision the documented toolchain
+for a fresh isolated build, and capture the original route before optimizing.
+Use the handoff and reports already written. Keep the earlier work and any
+other user edits intact. Append actual measurements, blockers and accepted
+commit hashes here as the milestones progress.
+
+---
+STEP 01 | 2026-11-25 | TELEMETRY AND BASELINE CAPTURE | PARTIAL (HARDWARE PENDING)
+- Baseline pinned in ~/PocketMajora-evidence/baseline/digests.txt:
+  dirty_baseline.diff sha256 a0b12ebd8287526f0d3749a3a3766255d985386457face24dc96607f65480cf0
+  initial baseline build EBOOT.PBP sha256 2df02d1e68b810ec77542e5488d4e2aca51aa5562a6f1a60473f7712ce3f5572
+- Toolchain provisioned per .github/workflows/psp-build.yml: PSPDEV v20261001 + me-core f153f0de in /tmp/pspdev, venv in /tmp/mm-venv.
+- Implemented opt-in PSP_TRACE=0/1 in Makefile.psp (invalidates .config), src/port/psp/mm_psp_trace.{h,c} (56-byte events, 5 lock-free per-thread 1024-entry rings + 128-entry outlier ring, off-path append/close flushing, switchable scopes PSP_TRACE_SCOPES=0x1F), wired OotPspPerformance_BeginFrame/EndFrame in src/code/graph.c + Flush in mm_psp_probe.c, plus continuous/scoped hooks in mm_psp_scheduler.c, oot_psp_video_thread.c, gfx_scegu.c, gfx_fast3d.c, oot_psp_audio_backend.c, oot_psp_asset_loader.c, oot_psp_suspend.c, mm_psp_game.c, z_scene.c, z_play.c, z_actor.c.
+- Implemented host reducer tools/psp_trace_reduce.py and host fixture tools/tests/test_psp_trace_reducer.py.
+- Verified: test_psp_trace_reducer.py, test_psp_frame_pacing.py, test_psp_wake_trace.py, test_psp_me_cache_layout.py and full 43/43 tools/run_psp_tests.py passed.
+- Step 01 EBOOTs: EBOOT.release.PBP (e7de0871...) and EBOOT.trace.PBP (a51b9fce...) in ~/PocketMajora-evidence/step-01/.
+- Paired PPSSPP 40 FPS trials (3x before PSP_TRACE=0 vs 3x after PSP_TRACE=1, isolated test-install):
+  Free RAM delta: 18,263,808 -> 17,959,680 bytes (304,128 bytes static BSS; 0 heap allocs; identical 8-line mm-psp-diag.log).
+  Trial 1/2/3 trace summary: 8.17s, 232 ticks (28.39/s), 336 render passes (41.12/s), 338 distinct fronts (41.36/s),
+  critical_path mean=5733 us, p95=10561/10561/10596 us, seq_gaps=0, stale_generations=0, audio_underruns=0.
+- Hardware gate: PSP-3000 unavailable (not connected); hardware capture pending. Commit withheld due to pending hardware gate and shared uncommitted user hunks.
+
+---
+STEP 02 | 2026-11-25 | AUDIO GAP DIAGNOSIS AND HOST PCM TESTS | PARTIAL (HARDWARE SOAK & ME PENDING)
+- Inspected OutputThread, ProducerThread, TryRunUpdate, RenderOutputChunkState, PublishPendingMeQueue, AudioThread_UpdateImpl, AudioLoad_SyncDma/ProcessSlowLoads, DmaMgr_AudioDmaHandler, and /tmp/pspdev/psp/sdk/include/pspaudio.h (64-sample alignment, 768 stereo frames/44100Hz = ~17.415ms, 32000Hz nominal source chunk = 558 frames, Target 6 / Startup 4 / Backoff 5 / Urgent 3 / Recovery 2).
+- Built PSP_AUDIO_DIAGNOSTICS=1 + PSP_TRACE=1 (build/psp-port/n64-us-audiodiag) and captured PPSSPP run (~/PocketMajora-evidence/step-02/before/ppsspp/audiodiag/): 0 underruns, 0 output errors, min buffered 679 frames, late=20/s maxlate=10291us during 20Hz frame renders, audio asset reads=3 (all cache hits).
+- Fix in src/port/psp/backend/oot_psp_audio_backend.c (ProducerThread): trigger bounded catchup (<=2 updates, capped at TargetBufferFrames) whenever playableFrames drops below UrgentBufferFrames, not only when delayUsec < -16666 us, preventing prolonged low-ring residency with 0 added watermark latency or RAM.
+- Added host PCM/reference suite tools/tests/test_psp_audio_output.py covering wrap, few frames (0..10), signed extrema, 2000-chunk 32kHz->44.1kHz resampling continuity (maxBoundaryJump=752), exact 2x wrap, underrun/re-prime, late ME queue fallback, and IO_BACKOFF retry.
+- Verified: test_psp_audio_output.py, test_psp_suspend.py, PSP_AUDIO_MEDIA_ENGINE=0 build/run vs default ME=1 build/run, and test_psp_me_cache_layout.py on default ELF passed.
+- Pending gates: PSP-3000 hardware ME execution and >=20 min spawn-burst/door soak unavailable without hardware. Commit withheld.
+
+---
+STEP 03 | 2026-11-25 | DISPLAY HANDOFF RECOVERY AND STABLE PRESENTATION | PARTIAL (HARDWARE SOAK PENDING)
+- Bounded vblank wait and checked display queries/flips in src/port/psp/backend/gfx/gfx_scegu.c (gfx_scegu_present_triple): capped pending wait at maxPendingVblanks=4, drained GE and re-anchored scanout if ownership fails/stalls, preserved sDisplayBuffer and cleared sPendingBuffer on rejected sceDisplaySetFrameBuf, tracked prevDisplay when sceDisplayGetFrameBuf fails so next draw buffer stays distinct from scanout/pending without exceeding 4 vblanks.
+- Checked sceKernelSignalSema(sRequestSema, 1) return code in src/port/psp/backend/oot_psp_video_thread.c (OotPspVideoThread_Submit) to fall back to synchronous frame completion without leaving sFramePending stuck.
+- Extended tools/tests/test_psp_video_thread.py (repeated handoffs, failed semaphore signal fallback) and tools/tests/test_psp_vsync.py (rejected SetFrameBuf, stuck front, failing GetFrameBuf within <=4 vblanks and distinct buffer invariants).
+- Verified: test_psp_video_thread.py, test_psp_vsync.py, test_psp_graphics_resume.py, and full 44/44 tools/run_psp_tests.py passed; built release (618acd4b...) and PSP_TRACE=1 (3105027c...) in ~/PocketMajora-evidence/step-03/.
+- PPSSPP 33.7s attract-mode in-game demo capture (~/PocketMajora-evidence/step-03/after/ppsspp/demo/): 1325 render passes (39.30/s), 1327 distinct fronts (39.36/s), over_25ms=0, critical_path mean=10919us p95=19339us p99=20147us max=74892us, stale_generations=0, seq_gaps=0.
+- Pending gates: PSP-3000 hardware LCD + TV/DVE sleep/wake presentation soak unavailable without hardware. Commit withheld.
+
+---
+STEP 04 | 2026-11-25 | ATOMIC FLASH SAVE COMMIT AND RECOVERY | PARTIAL (HARDWARE GATE PENDING)
+- Implemented atomic flash transaction in src/port/psp/mm_psp_game.c: added static 128 KiB sMmPspFlashStaging buffer so SysFlashrom_WriteAsync stages changes before touching sMmPspFlash or disk, writes checked full chunks + checked sceIoClose to mm-psp-save.bin.tmp, removes old .bak and renames live -> .bak and .tmp -> live (respecting PSP FAT non-overwriting sceIoRename), rolls back .bak -> live on commit failure, calls best-effort sceIoSync on ms0:/ef0:, and recovers intact prior generation from .bak in MmPsp_LoadFlash while preserving legacy 128 KiB raw format.
+- Extended tools/tests/test_psp_flash_save.py with PSP FAT EEXIST rename semantics and fault injection for open, short/zero write, disk-full write budget, failed close, failed remove, both rename boundaries, truncated/deleted live recovery from .bak, and legacy raw load without .bak.
+- Verified: test_psp_flash_save.py and test_psp_storage_paths.py passed; built release (13cc6664...) and PSP_TRACE=1 (bf02ad0d...) in ~/PocketMajora-evidence/step-04/.
+- PPSSPP verification (~/PocketMajora-evidence/step-04/ppsspp/): File Select -> Options save committed both mm-psp-save.bin (131072 B) and mm-psp-save.bin.bak (131072 B) cleanly in isolated test-install.
+- Pending gates: PSP-3000 hardware write-interrupt / battery-pull test unavailable without hardware. Commit withheld.
+
+---
+STEP 05 | 2026-11-25 | DEADLINE-AWARE PACKED ASSET STREAMING | PARTIAL (HARDWARE MS0 BENCH PENDING)
+- Implemented bounded deadline-aware packed asset prefetch worker in src/port/psp/backend/oot_psp_asset_loader.{h,c}:
+  - Added 32-slot deadline-prioritized prefetch queue (OOT_PSP_PREFETCH_QUEUE_CAPACITY), 64 KiB aligned private staging buffer (sOotPspPrefetchStaging) so no cache slot is ever locked or marked loading across yields, and monotonically wrapped sOotPspPrefetchGeneration for stale-request cancellation.
+  - Added OotPsp_AssetBeginStreamGeneration(), OotPsp_AssetGetStreamGeneration(), OotPsp_AssetPrefetch(), and low-priority worker thread OOT PSP Prefetch (priority 0x3A) that reads 16 KiB chunks and immediately yields to urgent audio (OotPspAudioBackend_NeedsRefillDuringIo()), foreground asset pressure, suspend state, or generation changes, committing completed 64 KiB blocks atomically into sOotPspPackedCacheBlocks.
+- Wired stream generation resets & non-blocking room/object prefetch hints into src/code/z_scene.c (Scene_CommandSpawnList, Scene_CommandRoomList, Scene_CommandObjectList, Object_UpdateEntries).
+- Added host test suite tools/tests/test_psp_asset_stream.py covering deadline ordering, short/zero reads, urgent audio preemption mid-block without slot pin, cache clock wrap/eviction, truncated EOF tail, mid-flight generation cancel, and suspend abort.
+- Verified: test_psp_asset_stream.py, test_psp_asset_builder.py, test_psp_first_boot.py, test_psp_suspend.py passed; built release (34670962...) and PSP_TRACE=1 (c4ddb857...) in ~/PocketMajora-evidence/step-05/.
+- PPSSPP 33.3s attract-mode demo capture (~/PocketMajora-evidence/step-05/after/ppsspp/demo/): 1296 render passes (38.88/s), 1298 distinct fronts (38.94/s), asset_read mean=115us p50=70us, 0 stale generations, 0 seq gaps.
+- Pending gates: PSP-3000 Memory Stick Pro Duo / ef0 cold-warm timing and audio-coexistence soak unavailable without hardware. Commit withheld.
+
+---
+STEP 06 | 2026-11-25 | ACTOR READINESS AND POP-IN | PARTIAL (HARDWARE VISUAL SOAK PENDING)
+- Removed artificial +1-frame stall after synchronous DMA completion in src/code/z_scene.c (Object_UpdateEntries): check osRecvMesg(&entry->loadQueue, ..., OS_MESG_NOBLOCK) immediately when entry->dmaReq.vromAddr != 0 rather than waiting via else-if until the next frame.
+- Wired urgent deadline=0 prefetch escalation in src/code/z_actor.c (Actor_Init) whenever a spawning actor finds its object slot still loading.
+- Added host test tools/tests/test_psp_object_readiness.py covering immediate readiness on synchronous DMA completion, empty object slots, and pending async completion semantics.
+- Verified: test_psp_object_readiness.py, test_psp_frustum.py, test_psp_camera_near.py, test_psp_frame_interpolation.py, test_psp_asset_stream.py passed; built release (f7d315fa...) and PSP_TRACE=1 (8f836f6d...) in ~/PocketMajora-evidence/step-06/.
+- PPSSPP 33.56s attract-mode demo capture (~/PocketMajora-evidence/step-06/after/ppsspp/demo/) into South Clock Town (scene 111, 0xd800, 19 objects):
+  - obj_ready_latencies_us: 10.4–12.3 ms across all 24 events (down from 38.7–235.5 ms in Step 05; >19x improvement in worst-case object readiness).
+  - actor_ctor count increased from 10 to 31 (actors initialize on arrival frame instead of deferring); tick_sim mean 905 -> 595 us (max 204.2 -> 58.8 ms); critical_path max 255.2 -> 86.4 ms; over_25ms_passes 7 -> 2; vblank_wait count 1.
+- Pending gates: PSP-3000 physical camera-sweep / corridor transition capture unavailable without hardware. Commit withheld.
+
+---
+STEP 07 | 2026-11-25 | 40 FPS RENDER WORKLOAD AND CADENCE | PARTIAL (HARDWARE 40 FPS GATE PENDING)
+- Increased hardware native mesh cache capacity OOT_PSP_NATIVE_MESH_ENTRIES from 8 to 32 in src/port/psp/backend/gfx/gfx_fast3d.c (~230 KiB static BSS out of ~16.9 MiB free RAM) to prevent thrashing static submeshes in crowded Clock Town/dungeon scenes.
+- Added empty-pool early-out in OotPspFrameInterpolation_ForgetIdentity (src/port/psp/backend/oot_psp_frame_interpolation.c) to avoid full 4096-entry scans during teardown/actor frees when pools are empty.
+- Verified updateRate == 2 cadence handling (pause/Bombers Notebook/message 30 Hz sim at 40 FPS -> 2 passes/33.3ms, 16667 us/pass) and full host suite: test_psp_frame_pacing.py, test_psp_frame_interpolation.py, test_psp_ge_submit.py, test_psp_native_mesh.py, test_psp_vsync.py passed; built release (194fd186...) and PSP_TRACE=1 (5209b8be...) in ~/PocketMajora-evidence/step-07/.
+- Matched 43s PPSSPP 20/40/60 FPS attract-mode demo runs entering South Clock Town (~/PocketMajora-evidence/step-07/after/ppsspp/fps{20,40,60}/):
+  - Initial 10 tick state hashes match bit-for-bit across all three modes (e.g. 3756373937129508857, 17971444296588348078, ...).
+  - fps=40: 921 ticks (21.37/s), 1685 passes (39.09/s), 1686 distinct fronts (39.11/s), dl_xlate mean=8016us p95=21979us, obj_max=12.6ms.
+  - fps=20: 937 ticks (21.44/s), 937 fronts (21.44/s); fps=60: 888 ticks (20.36/s), 2352 fronts (53.94/s).
+- Pending gates: PSP-3000 real hardware 40 FPS frame-budget (<25ms) validation on cold/warm crowded Clock Town route unavailable without hardware. Commit withheld.
+
+---
+STEP 08 | 2026-11-25 | N64 VISUAL PARITY AUDIT AND TEST SUITE | PARTIAL (HARDWARE VISUAL CAPTURE PENDING)
+- Audited N64_GRAPHICS_PARITY_MATRIX.txt rows 01..12 against src/port/psp/backend/gfx/{gfx_fast3d.c,gfx_scegu.c} and src/port/psp/mm_psp_gfx_scegu.c; no unauthorized visual compromises introduced.
+- Executed all visual parity host suites: test_psp_mm_passes.py, test_psp_motion_blur.py, test_psp_zero_fog.py, test_psp_combiner.py, test_psp_material_transitions.py, test_psp_clock_town_walls.py, test_psp_arrow_glow.py, test_psp_get_item_materials.py, test_psp_decal_depth.py, test_psp_gpu_lighting.py, test_psp_gpu_shadows.py, test_psp_hud_projection.py, test_psp_layer_clipping.py, test_psp_limb_matrix.py, test_psp_rectangle_scissor.py, test_psp_sampler_state.py, test_psp_shader_lifecycle.py, test_psp_shadow_dispatch.py, test_psp_texture_coords.py, test_psp_texture_mirror.py, test_psp_texture_stride.py, test_psp_texture_upload.py, test_psp_triangle_output.py (all passed).
+- Captured live PPSSPP Clock Town cutscene/flyover renders (~/PocketMajora-evidence/step-08/ppsspp/{01_title_mask,02_clock_town_demo1,03_clock_town_demo2}.png) verifying wrapped Clock Town walls, two-cycle tower spotlight, atmospheric fog, letterbox scissor bars, lighting, and skybox.
+- Pending gates: PSP-3000 real LCD + Slim DVE TV inspection for rows 04 (noise) & 11 (lens/monochrome/wipes) unavailable without hardware. Commit withheld.
+
+---
+STEP 09 | 2026-11-25 | SUSPEND INTEGRATION AND FINAL SCORECARD | PARTIAL (HARDWARE SOAK PENDING)
+- Audited suspend/resume ordering across oot_psp_suspend.c, oot_psp_renderer.c, oot_psp_audio_backend.c, oot_psp_asset_loader.c, and mm_psp_game.c: prepare waits on sOotPspAssetSema before closing packed FD & setting suspended; resume restores renderer -> assets -> audio -> wake trace.
+- Verified: test_psp_suspend.py, test_psp_graphics_resume.py, test_psp_flash_save.py, test_psp_wake_trace.py, and complete 46/46 tools/run_psp_tests.py passed.
+- Final builds: release (c72920642016d3b25390e84718c698366a5580af771fcb2a7638e6a3ea6f688e) and PSP_TRACE=1 verified.
+- Final scorecard written to ~/PocketMajora-evidence/step-09/SCORECARD.txt.
+
+---
+STEP 11 (REAL PSP-3000 20/40 FPS FEEDBACK) | 2026-11-25 | LCD 16-BIT GE BANDWIDTH, DYNAMIC ANIMATION-SAFE PACING, AND VERTEX FAST PATH
+- Diagnosed real PSP-3000 feedback (audio stutter mostly fixed, slowdowns still present at 20 FPS, animations slow down at 40 FPS) using -DOOTDEBUG=1 South Clock Town telemetry (~/PocketMajora-evidence/perf-ootdebug/oot-psp-performance.csv) and DL_PROF breakdown (prof.log):
+  1. On Slim/3000 with dvemgr.prx (4 MiB EDRAM), gfx_scegu.c forced 32-bit GU_PSM_8888 framebuffers even on handheld LCD (!tvOutput), doubling GE fill, fog overdraw, and motion blur EDRAM/RAM copy bandwidth (undetected in PPSSPP where dvemgr SetEdramSize returns error and runs 16-bit GU_PSM_5650).
+  2. In 40/60 FPS modes, Sched_SendNotifyMsg unconditionally ran 2 or 3 passes per 20 Hz tick even when scene/GE work exceeded the 50ms tick budget, dropping simulation rate below 20 Hz (slow-motion animations).
+  3. Clock Town spent 95% of non-idle CPU in dl_xlate (gfx_fast3d.c): seg_addr was defined below gfx_sp_vertex_f3dex2 so 780+ G_VTX calls/pass missed inlining; gfx_sp_vertex repeated VFPU store-load hazards and rewrote unchanged clip coords; gfx_native_try checked HUD anchors before G_BL_CLR_FOG rejection despite 0/779 Clock Town hits; gfx_texture_palette_key hashed runtime palettes byte-by-byte; texman_bind_tex recomputed storage size before checking sPspTexGuBound.
+- Fixes implemented:
+  - src/port/psp/backend/gfx/gfx_scegu.c: select 16-bit GU_PSM_5650 on LCD (!mode->tvOutput) and reserve 32-bit GU_PSM_8888 for TV output (mode->tvOutput && sMaxBufferWidth == TV_BUFFER_WIDTH), retaining full TV buffer headroom.
+  - src/port/psp/mm_psp_scheduler.c: track renderBusyUs in Sched_SendNotifyMsg and hold multi-pass interpolation at 1 exact pose pass (sMultiPassHoldTicks=20) after 3 consecutive over-budget ticks so 40/60 FPS preserves 20 Hz animation speed under heavy load.
+  - src/port/psp/backend/gfx/{gfx_fast3d.c,psp_texture_manager.c}: moved seg_addr inline definition above gfx_sp_vertex_f3dex2, hoisted invariants and eliminated redundant clip stores in gfx_sp_vertex, fast-rejected G_BL_CLR_FOG / disallowed modes first in gfx_native_try, added word-sized FNV-1a hashing in gfx_texture_palette_key, and checked sPspTexGuBound early in texman_bind_tex.
+- Verified with -DOOTDEBUG=1 55s Clock Town run (~/PocketMajora-evidence/perf-ootdebug/oot-psp-performance-after.csv): dynamic guard stabilized scene 111 renderer_avg_us from 44,400 -> 21,860-29,789 us with total_avg_us=49,633-50,075 us (20 Hz simulation maintained). All 46/46 tools/run_psp_tests.py passed after final edit.
+
+---
+STEP 10 (HARDWARE FEEDBACK) | 2026-11-25 | 65S DEMO AUDIT, AUDIO STARVATION, MS0 DIAG I/O, AND TEXTURE CACHE THRASHING FIX
+- Root causes diagnosed from 63.55s PPSSPP attract demo trace (~/PocketMajora-evidence/perf-audit-60s/):
+  1. Audio thread starvation at equal priority 0x20: OOT_PSP_AUDIO_PRODUCER_THREAD_PRIORITY equaled game thread 0x20, letting 25-62ms dl_xlate bursts stall audio_producer up to 53,340 us and cause 2 underruns (audio_playable_min=330).
+  2. Synchronous Memory Stick FAT32 file opens in release builds: MmPsp_DiagLog("object empty"/"object loaded"/"scene init" in src/code/z_scene.c and "actor draw skipped" in src/code/z_actor.c) performed sceIoOpen(O_APPEND)+sceIoWrite+sceIoClose 36 times during scene loads.
+  3. Texture cache thrashing + uncached EDRAM swizzle: 32-bit LCD framebuffers left only 966,656 B uncached EDRAM + 512 slots, triggering Clock Town gfx_texture_cache_clear() stalls & per-frame re-uploads (693 uploads). Also optimized gfx_bleed_alpha_edges, CI4/CI8 palette pre-decoding, seg_addr inlining, and vertex/pipeline fast paths in gfx_fast3d.c.
+- Fixes implemented:
+  - src/port/psp/backend/oot_psp_audio_backend.c: raised OOT_PSP_AUDIO_OUTPUT_THREAD_PRIORITY (0x1D), PRODUCER_URGENT (0x1E), and PRODUCER_THREAD_PRIORITY (0x1F) strictly above game thread 0x20.
+  - src/code/z_scene.c, src/code/z_actor.c: gated routine scene/object/actor DiagLog messages to OOTDEBUG || MM_PSP_TRACE so release builds only log startup/faults to mm-psp-diag.log.
+  - src/port/psp/backend/gfx/{psp_texture_manager.h,gfx_scegu.c,gfx_fast3d.c}: expanded TEXMAN_MAX_TEXTURES 513->1537, TEXMAN_BUFFER_SIZE to 3 MiB cached RAM on extended-RAM LCD units (<2 MiB EDRAM free, >=7 MiB max free RAM), hashmap 1024->2048 / pool 512->1536, inlined specialized gfx_bleed_alpha_edges, pre-decoded CI4/CI8 palettes, inlined seg_addr, and guarded tri_pipeline_dirty fast path in gfx_sp_triangles.
+- Verified after-fix 63.58s PPSSPP demo capture (~/PocketMajora-evidence/perf-audit-60s-after2/):
+  - audio_underruns: 2 -> 0; audio_playable_min: 330 -> 650; audio_producer p99: 17,940 -> 3,354 us (max 53,340 -> 14,696 us).
+  - tex_upload count: 693 -> 468; over_50ms_passes: 1 -> 0; dl_xlate max: 62,397 -> 42,630 us; ticks_per_s: 20.86; distinct_fronts_per_s: 38.79; 1325/1325 common state_hashes bit-exact (0 mismatches).
+  - 65s release verification (~/PocketMajora-evidence/perf-audit-60s-release/): mm-psp-diag.log limited to 2 lines (startup header + memory line); confirmed oot-psp texture cache storage=ram addr=0x9991400 size=3145728.
+- Regression & deployment: All 46/46 tools/run_psp_tests.py scripts passed after final edit; release EBOOT.PBP (c4c30b29...) and Plugins/dvemgr.prx (c22903d1...) deployed to /dev/sdc1 (/run/media/ribhu/disk/PSP/GAME/MM_PSP/), SHA-256 verified, synced, and unmounted.

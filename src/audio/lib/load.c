@@ -1261,6 +1261,12 @@ void AudioLoad_SyncDma(uintptr_t devAddr, u8* ramAddr, size_t size, s32 medium) 
 
     Audio_InvalDCache(ramAddr, size);
 
+#if defined(TARGET_PSP) || defined(PLATFORM_PSP)
+    if (size != 0) {
+        AudioLoad_Dma(ioMesg, OS_MESG_PRI_HIGH, OS_READ, devAddr, ramAddr, size, msgQueue, medium, "FastCopy");
+        osRecvMesg(msgQueue, NULL, OS_MESG_BLOCK);
+    }
+#else
     while (true) {
         if (size < 0x400) {
             break;
@@ -1276,6 +1282,7 @@ void AudioLoad_SyncDma(uintptr_t devAddr, u8* ramAddr, size_t size, s32 medium) 
         AudioLoad_Dma(ioMesg, OS_MESG_PRI_HIGH, OS_READ, devAddr, ramAddr, size, msgQueue, medium, "FastCopy");
         osRecvMesg(msgQueue, NULL, OS_MESG_BLOCK);
     }
+#endif
 }
 
 void AudioLoad_SyncDmaUnkMedium(uintptr_t devAddr, u8* ramAddr, size_t size, s32 unkMediumParam) {
@@ -1732,6 +1739,11 @@ void AudioLoad_FinishSlowLoad(AudioSlowLoad* slowLoad) {
 void AudioLoad_ProcessSlowLoads(s32 resetStatus) {
     AudioSlowLoad* slowLoad;
     s32 i;
+#if defined(TARGET_PSP) || defined(PLATFORM_PSP)
+    const s32 slowChunkSize = 0x4000;
+#else
+    const s32 slowChunkSize = 0x400;
+#endif
 
     for (i = 0; i < ARRAY_COUNT(gAudioCtx.slowLoads); i++) {
         slowLoad = &gAudioCtx.slowLoads[i];
@@ -1752,7 +1764,7 @@ void AudioLoad_ProcessSlowLoads(s32 resetStatus) {
                     AudioLoad_FinishSlowLoad(slowLoad);
                     slowLoad->status = LOAD_STATUS_DONE;
                     *slowLoad->isDone = 1;
-                } else if ((s32)slowLoad->bytesRemaining < 0x400) {
+                } else if ((s32)slowLoad->bytesRemaining < slowChunkSize) {
                     if (slowLoad->medium == MEDIUM_UNK) {
                         size_t size = slowLoad->bytesRemaining;
 
@@ -1764,14 +1776,14 @@ void AudioLoad_ProcessSlowLoads(s32 resetStatus) {
                     slowLoad->bytesRemaining = 0;
                 } else {
                     if (slowLoad->medium == MEDIUM_UNK) {
-                        AudioLoad_DmaSlowCopyUnkMedium(slowLoad->curDevAddr, (uintptr_t)slowLoad->curRamAddr, 0x400,
-                                                       slowLoad->unkMediumParam);
+                        AudioLoad_DmaSlowCopyUnkMedium(slowLoad->curDevAddr, (uintptr_t)slowLoad->curRamAddr,
+                                                       slowChunkSize, slowLoad->unkMediumParam);
                     } else {
-                        AudioLoad_DmaSlowCopy(slowLoad, 0x400);
+                        AudioLoad_DmaSlowCopy(slowLoad, slowChunkSize);
                     }
-                    slowLoad->bytesRemaining -= 0x400;
-                    slowLoad->curRamAddr += 0x400;
-                    slowLoad->curDevAddr += 0x400;
+                    slowLoad->bytesRemaining -= slowChunkSize;
+                    slowLoad->curRamAddr += slowChunkSize;
+                    slowLoad->curDevAddr += slowChunkSize;
                 }
                 break;
         }
@@ -1871,7 +1883,11 @@ AudioAsyncLoad* AudioLoad_StartAsyncLoad(uintptr_t devAddr, void* ramAddr, size_
     asyncLoad->bytesRemaining = size;
 
     if (nChunks == 0) {
+#if defined(TARGET_PSP) || defined(PLATFORM_PSP)
+        asyncLoad->chunkSize = 0x10000;
+#else
         asyncLoad->chunkSize = 0x1000;
+#endif
     } else if (nChunks == 1) {
         asyncLoad->chunkSize = size;
     } else {

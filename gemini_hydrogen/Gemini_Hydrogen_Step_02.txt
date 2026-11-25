@@ -1,0 +1,82 @@
+Gemini Hydrogen | Step 02 | Prevent audible breaks at the first missed producer deadline
+Role: IMPLEMENTER for the existing PocketMajora PSP port.
+Run git rev-parse --show-toplevel and work in that root. Read
+gemini_hydrogen/ASTRA_ANALYSIS.txt, PERFORMANCE_BASELINE_AND_ACCEPTANCE.txt,
+Gemini_Hydrogen_Step_02.txt and HANDOFF.txt (all in gemini_hydrogen/) before editing.
+Prerequisite: 01 capture schema and reference route. Check the actual evidence and open gates.
+Goal: real 40 rendered FPS on PSP-3000 at correct MM tick rate, uninterrupted
+audio, timely visible assets, N64 effects and stable saves/memory. Implement
+only this milestone and its specific regression coverage.
+
+Start with git branch --show-current, git status --short, git log -1 --oneline
+and git diff. Preserve the dirty baseline including the user's 40 FPS, audio,
+asset and VFPU work. Pin the baseline binary and diff digest. Scope technical
+changes to the named active paths and prove that normal callers use them.
+
+Inspect src/port/psp/backend/oot_psp_audio_backend.c OutputThread,
+ProducerThread, TryRunUpdate, RenderOutputChunkState, PublishPendingMeQueue
+(the functions have OotPspAudioBackend_ prefixes). Trace src/audio/lib/thread.c
+AudioThread_UpdateImpl, load.c AudioLoad_SyncDma / AudioLoad_ProcessSlowLoads
+and mm_psp_game.c DmaMgr_AudioDmaHandler. The output channel takes 768 stereo
+frames at 44100 Hz (~17.415 ms). At 32000 Hz a nominal chunk rounds up to 558
+source frames. Target 6 chunks (~105 ms), initial 4, urgent 3, recovery 2;
+physical ring capacity 512 ms is distinct from intended latency. Confirm
+format, blocking return semantics and sample alignment in installed pspaudio.h.
+
+Build PSP_AUDIO_DIAGNOSTICS=1 ./psp.sh VERSION=n64-us. Plot playable,
+outstanding ME, queued-to-driver and consumed frames separately. At the first
+gap correlate missed producer wake, audio DMA, foreground loader lock hold,
+ME wait/publication and output error. Check that a full, healthy ring still
+yields continuous PCM at chunk boundaries. If so investigate sample loading,
+resampler endpoint/phase and signed extrema or voice/event loss. Implement the
+smallest fix for the demonstrated cause. Prefer advance delivery of a measured
+bank range or prompt publication over raising watermarks. Quantify added
+latency and RAM. Preserve stereo ordering, sequence time, effect tails and
+one producer/consumer cursor owner; complete cache fencing before publishing
+ME writes. Output path must only consume prepared PCM/resample and block on
+the device; move any discovered I/O, allocation, lock wait or log off that path.
+Respect ME fallback, reset and suspend. Keep worker storage bounded.
+
+Add host PCM/reference tests for wrap, few frames, impulse/ramp, prolonged
+non-integer resampling, underrun/re-prime, late completion and retry. Run
+python3 tools/tests/test_psp_me_cache_layout.py on the freshly linked ELF,
+python3 tools/tests/test_psp_suspend.py and compare with
+PSP_AUDIO_MEDIA_ENGINE=0 ./psp.sh VERSION=n64-us. Restore default build when
+finished. Listen to synchronized clips and verify zero unintended discontinuities,
+starvation/underrun counters or output errors during at least 20 min with
+spawn bursts and doors cold/warm. Archive occupancy tails, onset latency,
+drift, pitch and frame timing. If contention requires coordinated streaming,
+document the triggering trace and hand it to 05 with audio acceptance pending.
+
+Execution, evidence and finish
+------------------------------
+Use the CI toolchain from .github/workflows/psp-build.yml (PSPDEV v20261001,
+VME-compatible ME core, intraFont, MIPS binutils, PyYAML/colorama). Build with
+./psp.sh VERSION=n64-us and run python3 tools/run_psp_tests.py after substantive
+changes. Run the targeted tests above as you iterate. Correct failures; retain
+exact command, output and tool versions for anything blocked. Test PPSSPP and
+PSP-3000 whenever available. Log the actual mixer, device and run settings.
+Repeat matched inputs at 20/40 FPS and compare clock, position, collisions,
+input edges, quest/cutscene triggers, animation and audio event timing. Check
+60 FPS compatibility. Preserve original effects, thresholds and test fixtures.
+Record crashes, missing effects, audible glitches, pop-ins, actor stalls and
+memory spikes even if unrelated to this patch.
+
+Keep raw before/after traces, configs, metrics and clip IDs under
+~/PocketMajora-evidence/step-02/{before,after}/<device>/<run>/; keep ROM,
+save images and derived assets private. Summarize measured results and paths in
+HANDOFF.txt and update relevant technical documentation for changed behavior.
+If a gate fails, label partial, give failing command, affected files, log and
+safe recovery action, then stop this milestone. Mark unavailable hardware
+tests pending. Never fill in a passing measurement. For rollback preserve a
+copy of this milestone's diff and restore only its hunks; after commit prefer
+a targeted revert that preserves subsequent/user work.
+
+On full acceptance use git status, stage only this milestone (git add -p for
+mixed files), inspect git diff --cached and test that the staged result is
+reproducible on its documented prerequisite. If inseparable from uncommitted
+user hunks, document the dependency and withhold the commit. Never reset,
+force-push or commit unrelated work. Commit message: perf(audio): prevent measured PCM delivery gaps
+Run git log -1 --format=%H, record the actual accepted hash in the handoff
+after success. No passing commit for a blocked or rejected hypothesis.
+Next eligible work: 03 or 05 for a documented storage dependency.

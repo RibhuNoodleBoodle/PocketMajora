@@ -5,6 +5,7 @@
 #include "libc64/malloc.h"
 #include "mm_psp_diag_log.h"
 #include "mm_psp_path.h"
+#include "mm_psp_trace.h"
 #include "oot_psp_asset_loader.h"
 #include "oot_psp_audio_backend.h"
 #include "oot_psp_controls.h"
@@ -16,6 +17,7 @@
 #include "oot_psp_video_thread.h"
 #include "oot_psp_frame_interpolation.h"
 #include "oot_psp_video.h"
+#include "oot_psp_performance.h"
 #include "sys_cfb.h"
 #include "z64DLF.h"
 
@@ -143,6 +145,9 @@ static void MmPsp_RunGame(void) {
                 }
             } else {
                 Graph_Update(&gfxCtx, gameState);
+#if MM_PSP_TRACE
+                MmPspTrace_PollFlush();
+#endif
             }
         }
 
@@ -150,11 +155,23 @@ static void MmPsp_RunGame(void) {
             nextOverlay = Graph_GetNextGameState(gameState);
         }
         OotPspVideoThread_Wait();
+#if MM_PSP_TRACE
+        MmPspTrace_Record(MM_TRACE_THREAD_MAIN, MM_TRACE_EVT_MEM_SAMPLE, MM_TRACE_FLAG_INSTANT,
+                          0, 0, (uint64_t)sceKernelTotalFreeMemSize(),
+                          (uint64_t)sceKernelMaxFreeMemSize());
+        MmPspTrace_Flush(0);
+#endif
         OotPspFrameInterpolation_Reset();
         GameState_Destroy(gameState);
         free(gameState);
         Overlay_FreeGameState(overlay);
     }
+#if defined(OOTDEBUG)
+    OotPspPerformance_Flush();
+#endif
+#if MM_PSP_TRACE
+    MmPspTrace_Flush(1);
+#endif
     Graph_Destroy(&gfxCtx);
 }
 
@@ -241,6 +258,12 @@ int main(int argc, char** argv) {
         return 1;
     }
     printf("mm-psp startup: game initialized\n");
+#if MM_PSP_TRACE
+    MmPspTrace_Init();
+    MmPspTrace_Record(MM_TRACE_THREAD_MAIN, MM_TRACE_EVT_MEM_SAMPLE, MM_TRACE_FLAG_INSTANT,
+                      0, 0, (uint64_t)sceKernelTotalFreeMemSize(),
+                      (uint64_t)sceKernelMaxFreeMemSize());
+#endif
     MmPsp_RunGame();
     OotPspDve_Shutdown();
     sceKernelExitGame();

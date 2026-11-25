@@ -1,0 +1,36 @@
+PocketMajora | Gemini Hydrogen implementation order
+Scope and evidence define advancement. Effort/risk are engineering estimates:
+small = isolated change with harness, medium = cross-module, large = device
+measurement and multiple lifetimes. No target speedup has been measured.
+
+Step file                         | Prerequisite | Effort/risk | Gate
+Gemini_Hydrogen_Step_01.txt        | none  | medium/low | reproducible baseline,
+clocked per-pass, scanout/audio/asset telemetry and a measured observer cost.
+Gemini_Hydrogen_Step_02.txt        | 01    | medium/high | audio: fix or isolate
+first dropout, correct PCM, zero unintended gaps and underruns in >=20 min.
+Gemini_Hydrogen_Step_03.txt        | 01    | small/medium | display: injected
+queue/front errors recover within a documented bound; no buffer alias or hang.
+Gemini_Hydrogen_Step_04.txt        | 01    | medium/medium | save: durable valid
+previous/new generation on every injected write/close/replace failure.
+Gemini_Hydrogen_Step_05.txt        | 01,02 | large/high | streaming: measured
+critical requests meet readiness deadlines, bounded memory and safe cancellation.
+Gemini_Hydrogen_Step_06.txt        | 05    | medium/high | actors: zero unexplained
+late first-use events/pop-ins, unchanged activation tick and collision behavior.
+Gemini_Hydrogen_Step_07.txt        | 02,03,05,06 | large/high | frame throughput:
+40 distinct moving frames/s, ~25 ms work or quantified remaining critical path.
+Gemini_Hydrogen_Step_08.txt        | 07    | medium/high | graphics: complete parity
+ledger, evidence per correction, zero newly missing effects or timing regression.
+Gemini_Hydrogen_Step_09.txt        | 02 through 08 | medium/low implementation,
+high verification effort | hardware cold/warm + >=20 min, zero unexplained
+audio/visibility failures, stable RAM/VRAM/save/wake, full suite and AV evidence.
+
+Recommended dispatch is numeric. Steps 03 and 04 depend only on observability
+and may proceed independently of a blocked device audio test. Keep the save
+safety gate ahead of live save/reload soak. If audio evidence singles out
+storage, move its measured producer-delivery work into 05 and record the open
+02 device acceptance; do not invent a second audio subsystem. An unconfirmed
+optimization can close as "hypothesis rejected" only with decisive evidence
+and an explicit handoff disposition; no implementation commit for a no-op.
+If device access blocks final validation, record pending gates and continue
+only independently runnable tasks. Final acceptance always requires PSP-3000
+evidence. Staging/rollback rules and specific commands appear in each prompt.

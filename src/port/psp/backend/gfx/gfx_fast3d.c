@@ -30,6 +30,9 @@
 #if defined(TARGET_PSP)
 #include "buffers.h"
 #include "oot_psp_frame_interpolation.h"
+#if defined(MM_PSP_TRACE) && MM_PSP_TRACE
+#include "mm_psp_trace.h"
+#endif
 #endif
 #include "oot_port_macros.h"
 #include "oot_psp_asset_loader.h"
@@ -197,8 +200,8 @@ struct TextureHashmapNode {
     bool linear_filter;
 } __attribute__((packed, aligned(4)));
 static struct {
-    struct TextureHashmapNode *hashmap[1024];
-    struct TextureHashmapNode pool[512];
+    struct TextureHashmapNode *hashmap[2048];
+    struct TextureHashmapNode pool[1536];
     uint32_t pool_pos;
 } gfx_texture_cache;
 #if defined(TARGET_PSP)
@@ -426,7 +429,7 @@ static uint8_t sInvalidTextureBuf[256] __attribute__((aligned(16))) = { 0xff, 0x
 static uint8_t sInvalidPaletteBuf[512] __attribute__((aligned(16))) = { 0xff, 0xff };
 static struct GfxCmdSnapshot sCurrentCmd;
 #define GFX_VALIDATED_DL_CURSOR_CACHE_SIZE 256
-#define GFX_VALIDATED_READ_CACHE_SIZE 256
+#define GFX_VALIDATED_READ_CACHE_SIZE 1024
 #define GFX_SEGMENT_ADDRESS_CACHE_SIZE 512
 typedef struct GfxValidatedReadCacheEntry {
     uintptr_t addr;
@@ -760,8 +763,16 @@ static uint32_t gfx_texture_palette_key(const uint8_t* addr, uint32_t sizeBytes)
     }
 
     key = 2166136261U;
-    for (uint32_t i = 0; i < sizeBytes; i++) {
-        key = (key ^ bytes[i]) * 16777619U;
+    if ((((uintptr_t)bytes & 3U) == 0U) && ((sizeBytes & 3U) == 0U)) {
+        const uint32_t* words = (const uint32_t*)bytes;
+        const uint32_t wordCount = sizeBytes >> 2;
+        for (uint32_t i = 0; i < wordCount; i++) {
+            key = (key ^ words[i]) * 16777619U;
+        }
+    } else {
+        for (uint32_t i = 0; i < sizeBytes; i++) {
+            key = (key ^ bytes[i]) * 16777619U;
+        }
     }
 
     return key != 0 ? key : 1;
@@ -2178,7 +2189,7 @@ static bool gfx_texture_cache_lookup(int tile, struct TextureHashmapNode **n, co
 #else
     const bool dynamic_source = false;
 #endif
-    hash = (hash >> 5) & 0x3ff;
+    hash = (hash >> 5) & 0x7ff;
     node = &gfx_texture_cache.hashmap[hash];
     uint32_t importWidth;
     uint32_t importHeight;
@@ -2540,72 +2551,107 @@ static inline uint16_t gfx_rgba16_to_gu5551(uint16_t color) {
 }
 
 #if defined(TARGET_PSP)
-static uint32_t gfx_unpack_texel_rgba(const void* buf, uint32_t index, int psm,
-                                      uint32_t* r, uint32_t* g, uint32_t* b) {
-    if (psm == GU_PSM_8888) {
-        const uint8_t* p = (const uint8_t*)buf + index * 4U;
-        *r = p[0];
-        *g = p[1];
-        *b = p[2];
-        return p[3];
-    }
-    const uint16_t px = ((const uint16_t*)buf)[index];
-    if (psm == GU_PSM_5551) {
-        *r = px & 0x1FU;
-        *g = (px >> 5) & 0x1FU;
-        *b = (px >> 10) & 0x1FU;
-        return px >> 15;
-    }
-    *r = px & 0xFU;
-    *g = (px >> 4) & 0xFU;
-    *b = (px >> 8) & 0xFU;
-    return px >> 12;
-}
-
-static void gfx_pack_texel_rgb0(void* buf, uint32_t index, int psm,
-                                uint32_t r, uint32_t g, uint32_t b) {
-    if (psm == GU_PSM_8888) {
-        uint8_t* p = (uint8_t*)buf + index * 4U;
-        p[0] = (uint8_t)r;
-        p[1] = (uint8_t)g;
-        p[2] = (uint8_t)b;
-        return;
-    }
-    uint16_t* p = (uint16_t*)buf + index;
-    *p = (psm == GU_PSM_5551)
-             ? (uint16_t)(((b & 0x1FU) << 10) | ((g & 0x1FU) << 5) | (r & 0x1FU))
-             : (uint16_t)(((b & 0xFU) << 8) | ((g & 0xFU) << 4) | (r & 0xFU));
-}
-
 /* Bilinear filtering interpolates RGB and alpha independently, so zero-alpha
  * texels with black RGB create dark fringes around cutouts. Dilate edge RGB into
  * adjacent transparent texels without touching non-zero alpha pixels. */
 static void gfx_bleed_alpha_edges(void* buf, uint32_t width, uint32_t height, int psm) {
     if (width == 0U || height == 0U) return;
+    if (psm == GU_PSM_5551) {
+        uint16_t* pxBuf = (uint16_t*)buf;
+        for (uint32_t y = 0; y < height; y++) {
+            const uint32_t ymin = (y > 0U) ? (y - 1U) : 0U;
+            const uint32_t ymax = (y + 1U < height) ? (y + 1U) : (height - 1U);
+            const uint32_t rowBase = y * width;
+            for (uint32_t x = 0; x < width; x++) {
+                const uint32_t idx = rowBase + x;
+                if ((pxBuf[idx] & 0x8000U) != 0U) continue;
+                const uint32_t xmin = (x > 0U) ? (x - 1U) : 0U;
+                const uint32_t xmax = (x + 1U < width) ? (x + 1U) : (width - 1U);
+                uint32_t rSum = 0, gSum = 0, bSum = 0, count = 0;
+                for (uint32_t ny = ymin; ny <= ymax; ny++) {
+                    const uint16_t* nrow = pxBuf + ny * width;
+                    for (uint32_t nx = xmin; nx <= xmax; nx++) {
+                        const uint16_t npx = nrow[nx];
+                        if ((npx & 0x8000U) != 0U) {
+                            rSum += npx & 0x1FU;
+                            gSum += (npx >> 5) & 0x1FU;
+                            bSum += (npx >> 10) & 0x1FU;
+                            count++;
+                        }
+                    }
+                }
+                if (count != 0U) {
+                    const uint32_t half = count >> 1;
+                    pxBuf[idx] = (uint16_t)((((bSum + half) / count) << 10) |
+                                            (((gSum + half) / count) << 5) |
+                                            ((rSum + half) / count));
+                }
+            }
+        }
+        return;
+    }
+    if (psm == GU_PSM_4444) {
+        uint16_t* pxBuf = (uint16_t*)buf;
+        for (uint32_t y = 0; y < height; y++) {
+            const uint32_t ymin = (y > 0U) ? (y - 1U) : 0U;
+            const uint32_t ymax = (y + 1U < height) ? (y + 1U) : (height - 1U);
+            const uint32_t rowBase = y * width;
+            for (uint32_t x = 0; x < width; x++) {
+                const uint32_t idx = rowBase + x;
+                if ((pxBuf[idx] & 0xF000U) != 0U) continue;
+                const uint32_t xmin = (x > 0U) ? (x - 1U) : 0U;
+                const uint32_t xmax = (x + 1U < width) ? (x + 1U) : (width - 1U);
+                uint32_t rSum = 0, gSum = 0, bSum = 0, count = 0;
+                for (uint32_t ny = ymin; ny <= ymax; ny++) {
+                    const uint16_t* nrow = pxBuf + ny * width;
+                    for (uint32_t nx = xmin; nx <= xmax; nx++) {
+                        const uint16_t npx = nrow[nx];
+                        if ((npx & 0xF000U) != 0U) {
+                            rSum += npx & 0xFU;
+                            gSum += (npx >> 4) & 0xFU;
+                            bSum += (npx >> 8) & 0xFU;
+                            count++;
+                        }
+                    }
+                }
+                if (count != 0U) {
+                    const uint32_t half = count >> 1;
+                    pxBuf[idx] = (uint16_t)((((bSum + half) / count) << 8) |
+                                            (((gSum + half) / count) << 4) |
+                                            ((rSum + half) / count));
+                }
+            }
+        }
+        return;
+    }
+    uint32_t* pxBuf = (uint32_t*)buf;
     for (uint32_t y = 0; y < height; y++) {
         const uint32_t ymin = (y > 0U) ? (y - 1U) : 0U;
         const uint32_t ymax = (y + 1U < height) ? (y + 1U) : (height - 1U);
+        const uint32_t rowBase = y * width;
         for (uint32_t x = 0; x < width; x++) {
-            uint32_t r, g, b;
-            const uint32_t idx = y * width + x;
-            if (gfx_unpack_texel_rgba(buf, idx, psm, &r, &g, &b) != 0U) continue;
+            const uint32_t idx = rowBase + x;
+            if ((pxBuf[idx] & 0xFF000000U) != 0U) continue;
             const uint32_t xmin = (x > 0U) ? (x - 1U) : 0U;
             const uint32_t xmax = (x + 1U < width) ? (x + 1U) : (width - 1U);
             uint32_t rSum = 0, gSum = 0, bSum = 0, count = 0;
             for (uint32_t ny = ymin; ny <= ymax; ny++) {
+                const uint32_t* nrow = pxBuf + ny * width;
                 for (uint32_t nx = xmin; nx <= xmax; nx++) {
-                    if (gfx_unpack_texel_rgba(buf, ny * width + nx, psm, &r, &g, &b) != 0U) {
-                        rSum += r;
-                        gSum += g;
-                        bSum += b;
+                    const uint32_t npx = nrow[nx];
+                    if ((npx & 0xFF000000U) != 0U) {
+                        rSum += npx & 0xFFU;
+                        gSum += (npx >> 8) & 0xFFU;
+                        bSum += (npx >> 16) & 0xFFU;
                         count++;
                     }
                 }
             }
             if (count != 0U) {
                 const uint32_t half = count >> 1;
-                gfx_pack_texel_rgb0(buf, idx, psm, (rSum + half) / count,
-                                    (gSum + half) / count, (bSum + half) / count);
+                pxBuf[idx] = ((rSum + half) / count) |
+                             (((gSum + half) / count) << 8) |
+                             (((bSum + half) / count) << 16);
             }
         }
     }
@@ -2732,7 +2778,7 @@ static void import_texture_ia8(int tile) {
 }
 
 static void import_texture_ia16(int tile) {
-    uint8_t rgba32_buf[8192];
+    uint8_t rgba32_buf[8192] __attribute__((aligned(4)));
     uint32_t width = gfx_texture_import_width(tile);
     uint32_t height = gfx_texture_import_height(tile);
     uint32_t rowBytes = gfx_texture_row_bytes(width, G_IM_SIZ_16b);
@@ -2851,6 +2897,12 @@ static void import_texture_ci4(int tile) {
     const uint8_t* palette = rdp.palette;
 #endif
     GfxTextureSwapState paletteSwapState = gfx_texture_source_swap_state(palette, GFX_CI4_TLUT_SIZE_BYTES);
+    uint16_t guPalette[16];
+
+    for (uint32_t p = 0; p < 16; p++) {
+        uint16_t col16 = gfx_read_texture_source_be16(palette, p * 2, &paletteSwapState);
+        guPalette[p] = gfx_rgba16_to_gu5551(col16);
+    }
 
     for (uint32_t y = 0; y < height; y++) {
         const uint8_t* row = gfx_texture_row(tile, y, rowBytes);
@@ -2858,8 +2910,7 @@ static void import_texture_ci4(int tile) {
         for (uint32_t x = 0; x < width; x++) {
             uint32_t i = y * width + x;
             uint8_t idx = gfx_texture_read_4b(tile, x, row, &swapState);
-            uint16_t col16 = gfx_read_texture_source_be16(palette, idx * 2, &paletteSwapState);
-            rgba16_buf[i] = gfx_rgba16_to_gu5551(col16);
+            rgba16_buf[i] = guPalette[idx];
         }
     }
 
@@ -2883,6 +2934,12 @@ static void import_texture_ci8(int tile) {
     const uint8_t* palette = rdp.palette;
 #endif
     GfxTextureSwapState paletteSwapState = gfx_texture_source_swap_state(palette, GFX_TLUT_SIZE_BYTES);
+    uint16_t guPalette[256];
+
+    for (uint32_t p = 0; p < 256; p++) {
+        uint16_t col16 = gfx_read_texture_source_be16(palette, p * 2, &paletteSwapState);
+        guPalette[p] = gfx_rgba16_to_gu5551(col16);
+    }
 
     for (uint32_t y = 0; y < height; y++) {
         const uint8_t* row = gfx_texture_row(tile, y, rowBytes);
@@ -2890,8 +2947,7 @@ static void import_texture_ci8(int tile) {
         for (uint32_t x = 0; x < width; x++) {
             uint32_t i = y * width + x;
             uint8_t idx = gfx_read_texture_source_u8(row, x, &swapState);
-            uint16_t col16 = gfx_read_texture_source_be16(palette, idx * 2, &paletteSwapState);
-            rgba16_buf[i] = gfx_rgba16_to_gu5551(col16);
+            rgba16_buf[i] = guPalette[idx];
         }
     }
 
@@ -2937,7 +2993,18 @@ static void import_texture(int tile) {
             return;
         }
     }
-    
+
+#if defined(TARGET_PSP) && defined(MM_PSP_TRACE) && MM_PSP_TRACE
+    {
+        uint64_t texStartUs = 0;
+        int texScoped = MmPspTrace_ScopeEnabled(MM_TRACE_SCOPE_TEX_UPLOAD);
+        if (texScoped) {
+            texStartUs = MmPspTrace_BeginSpan(MM_TRACE_THREAD_MAIN, MM_TRACE_EVT_TEX_UPLOAD,
+                                              MM_TRACE_FLAG_SCOPED,
+                                              (uint32_t)(uintptr_t)rdp.loaded_texture[tile].addr,
+                                              0, (uint64_t)fmt, (uint64_t)siz);
+        }
+#endif
     //int t0 = get_time();
     if (fmt == G_IM_FMT_RGBA) {
         if (siz == G_IM_SIZ_16b) {
@@ -2976,6 +3043,14 @@ static void import_texture(int tile) {
     } else {
         abort();
     }
+#if defined(TARGET_PSP) && defined(MM_PSP_TRACE) && MM_PSP_TRACE
+        if (texScoped) {
+            MmPspTrace_EndSpan(MM_TRACE_THREAD_MAIN, MM_TRACE_EVT_TEX_UPLOAD, MM_TRACE_FLAG_SCOPED,
+                               (uint32_t)(uintptr_t)rdp.loaded_texture[tile].addr, 0,
+                               texStartUs, (uint64_t)fmt, (uint64_t)siz);
+        }
+    }
+#endif
     //int t1 = get_time();
     //printf("Time diff: %d\n", t1 - t0);
 }
@@ -4147,8 +4222,8 @@ static GFX_DL_HANDLER void gfx_sp_matrix(uint8_t parameters, const int32_t *addr
         for (int j = 0; j < 4; j += 2) {
             int32_t int_part = addr[i * 2 + j / 2];
             uint32_t frac_part = addr[8 + i * 2 + j / 2];
-            matrix[i][j] = (int32_t)((int_part & 0xffff0000) | (frac_part >> 16)) / 65536.0f;
-            matrix[i][j + 1] = (int32_t)((int_part << 16) | (frac_part & 0xffff)) / 65536.0f;
+            matrix[i][j] = (int32_t)((int_part & 0xffff0000) | (frac_part >> 16)) * (1.0f / 65536.0f);
+            matrix[i][j + 1] = (int32_t)((int_part << 16) | (frac_part & 0xffff)) * (1.0f / 65536.0f);
         }
     }
 #else
@@ -4213,7 +4288,7 @@ static float gfx_hud_anchor_direction(void) {
     return 0.0f;
 }
 
-static bool gfx_hud_anchor_enabled(void) {
+static inline bool gfx_hud_anchor_enabled(void) {
     return sHudAnchor != OOT_PSP_HUD_ANCHOR_NONE;
 }
 
@@ -4263,7 +4338,7 @@ struct ShaderProgram {
 };
 
 #ifndef OOT_PSP_NATIVE_MESH_ENTRIES
-#define OOT_PSP_NATIVE_MESH_ENTRIES 8
+#define OOT_PSP_NATIVE_MESH_ENTRIES 32
 #endif
 #if defined(TARGET_PSP) && defined(F3DEX_GBI_2) && OOT_PSP_NATIVE_MESH_ENTRIES > 0
 static void gfx_native_forget(uint64_t mask);
@@ -4344,6 +4419,14 @@ static bool gfx_sp_vertex(size_t n_vertices, size_t dest_index, const Vtx *verti
         rsp.lights_changed = false;
     }
 
+    const bool decalCheck = (rdp.other_mode_l & ZMODE_DEC) == ZMODE_DEC &&
+                            (geometryMode & G_LIGHTING) && !(geometryMode & G_TEXTURE_GEN);
+    const bool lightingEnabled = (geometryMode & G_LIGHTING) != 0;
+    const bool texGenEnabled = lightingEnabled && ((geometryMode & G_TEXTURE_GEN) != 0);
+    const uint16_t tcScaleS = rsp.texture_scaling_factor.s;
+    const uint16_t tcScaleT = rsp.texture_scaling_factor.t;
+    const bool hudAnchor = gfx_hud_anchor_enabled() && sHudViewportFullscreen;
+
     for (size_t i = 0; i < n_vertices; i++, dest_index++) {
         const Vtx_t *v = &vertices[i].v;
         const Vtx_tn *vn = &vertices[i].n;
@@ -4352,14 +4435,16 @@ static bool gfx_sp_vertex(size_t n_vertices, size_t dest_index, const Vtx *verti
         d->decal_lifted = 0;
 
 #if defined(TARGET_PSP)
-        if ((rdp.other_mode_l & ZMODE_DEC) == ZMODE_DEC &&
-            (geometryMode & G_LIGHTING) && !(geometryMode & G_TEXTURE_GEN)) {
+        if (__builtin_expect(decalCheck, 0)) {
             d->decal_lifted = gfx_lift_floor_decal(d, rsp.P_matrix);
         }
         float w = d->_w;
         float x = gfx_transform_clip_x(d->_x, w);
         const float y = d->_y;
         const float z = d->_z;
+        if (__builtin_expect(hudAnchor, 0)) {
+            d->_x = x;
+        }
 #else
         temp_vec[0] = v->ob[0];
         temp_vec[1] = v->ob[1];
@@ -4375,15 +4460,15 @@ static bool gfx_sp_vertex(size_t n_vertices, size_t dest_index, const Vtx *verti
         const float z = proj_vec[2];
 #endif
 
-        short U = v->tc[0] * rsp.texture_scaling_factor.s >> 16;
-        short V = v->tc[1] * rsp.texture_scaling_factor.t >> 16;
-        
-        if (geometryMode & G_LIGHTING) {
+        short U = (v->tc[0] * tcScaleS) >> 16;
+        short V = (v->tc[1] * tcScaleT) >> 16;
+
+        if (lightingEnabled) {
             /* GE supplies shade RGB. CPU combiner multiplication below now
              * produces the material tint, rather than a prelit color. */
             d->color.r = d->color.g = d->color.b = 255;
-            
-            if (geometryMode & G_TEXTURE_GEN) {
+
+            if (texGenEnabled) {
                 float dotx = 0, doty = 0;
                 dotx += vn->n[0] * rsp.current_lookat_coeffs[0][0];
                 dotx += vn->n[1] * rsp.current_lookat_coeffs[0][1];
@@ -4391,19 +4476,19 @@ static bool gfx_sp_vertex(size_t n_vertices, size_t dest_index, const Vtx *verti
                 doty += vn->n[0] * rsp.current_lookat_coeffs[1][0];
                 doty += vn->n[1] * rsp.current_lookat_coeffs[1][1];
                 doty += vn->n[2] * rsp.current_lookat_coeffs[1][2];
-                
-                U = (int32_t)((dotx * (1.0f / 127.0f) + 1.0f) * 0.25f * rsp.texture_scaling_factor.s);
-                V = (int32_t)((doty * (1.0f / 127.0f) + 1.0f) * 0.25f * rsp.texture_scaling_factor.t);
+
+                U = (int32_t)((dotx * (1.0f / 127.0f) + 1.0f) * 0.25f * tcScaleS);
+                V = (int32_t)((doty * (1.0f / 127.0f) + 1.0f) * 0.25f * tcScaleT);
             }
         } else {
             d->color.r = v->cn[0];
             d->color.g = v->cn[1];
             d->color.b = v->cn[2];
         }
-        
+
         d->u = U;
         d->v = V;
-        
+
         // Trivial clip rejection. Accumulate in a register so the PSP path
         // writes the loaded vertex once instead of load/OR/store per plane.
         uint32_t clipRej = 0;
@@ -4419,17 +4504,13 @@ static bool gfx_sp_vertex(size_t n_vertices, size_t dest_index, const Vtx *verti
         d->x = model_vec[0];
         d->y = model_vec[1];
         d->z = model_vec[2];
-#endif
-        d->w = w;
-
         d->_x = x;
         d->_y = y;
         d->_z = z;
         d->_w = w;
-
-#if !defined(TARGET_PSP)
         d->color.a = v->cn[3];
 #endif
+        d->w = w;
     }
 
     return true;
@@ -4456,7 +4537,50 @@ static bool gfx_sp_cull_display_list(uint32_t firstVertex, uint32_t lastVertex) 
 }
 
 #if defined(TARGET_PSP) && defined(F3DEX_GBI_2)
-static __attribute__((noinline, no_instrument_function)) void *seg_addr(uintptr_t w1);
+static __attribute__((noinline)) void *gfx_resolve_segmented_address_slow(uintptr_t w1);
+static inline __attribute__((no_instrument_function)) void *seg_addr(uintptr_t w1) {
+    uint8_t segment = w1 >> 24;
+    uintptr_t rspBase = 0;
+    uintptr_t globalBase = 0;
+    uintptr_t mappingBase;
+    size_t cacheIndex;
+    GfxSegmentAddressCacheEntry* entry;
+    void* resolved;
+
+    if (w1 == (uintptr_t)&D_01000000) {
+        rspBase = (uintptr_t)rsp.segments[1];
+        globalBase = gSegments[1];
+    } else if ((segment != 0) && (segment < NUM_SEGMENTS)) {
+        rspBase = (uintptr_t)rsp.segments[segment];
+        if (rspBase == 0) {
+            globalBase = gSegments[segment];
+        }
+    }
+
+    mappingBase = rspBase != 0 ? rspBase : globalBase;
+    cacheIndex = ((w1 >> 3) ^ (w1 >> 13) ^ (mappingBase >> 4) ^ (mappingBase >> 15)) &
+                 (GFX_SEGMENT_ADDRESS_CACHE_SIZE - 1);
+    entry = &sSegmentAddressCache[cacheIndex];
+    if (__builtin_expect((entry->raw == w1) && (entry->rspBase == rspBase) &&
+                         (entry->globalBase == globalBase), 1)) {
+        return entry->resolved;
+    }
+
+    resolved = gfx_resolve_segmented_address_slow(w1);
+
+    uint8_t rspBaseSegment = rspBase >> 24;
+    bool chainedRspBase = (rspBase != 0) && !gfx_addr_is_native(rspBase) &&
+                          (rspBaseSegment != 0) && (rspBaseSegment < NUM_SEGMENTS);
+
+    if (!chainedRspBase) {
+        entry->raw = w1;
+        entry->rspBase = rspBase;
+        entry->globalBase = globalBase;
+        entry->resolved = resolved;
+    }
+
+    return resolved;
+}
 
 static bool gfx_decode_vertex_cmd_f3dex2(uint32_t w0, uint32_t* n, uint32_t* destIndex) {
     const uint32_t count = (w0 >> 12) & 0xFF;
@@ -4877,7 +5001,9 @@ static void gfx_sp_triangles(uint32_t packed0, uint32_t packed1, uint8_t triangl
         clipped_vertices = sClippedVertexPtrs;
     }
 
-    gfx_prepare_tri_pipeline_state(false);
+    if (__builtin_expect(rendering_state.tri_pipeline_dirty || rendering_state.tri_pipeline.is_2d, 0)) {
+        gfx_prepare_tri_pipeline_state(false);
+    }
     const struct TriPipelineState *state = &rendering_state.tri_pipeline;
     struct ColorCombiner *comb = state->comb;
 
@@ -6969,7 +7095,8 @@ static __attribute__((noinline)) void *gfx_resolve_segmented_address_slow(uintpt
     return NULL;
 }
 
-static __attribute__((noinline, no_instrument_function)) void *seg_addr(uintptr_t w1) {
+#if !(defined(TARGET_PSP) && defined(F3DEX_GBI_2))
+static inline __attribute__((no_instrument_function)) void *seg_addr(uintptr_t w1) {
 #if defined(TARGET_PSP)
     uint8_t segment = w1 >> 24;
     uintptr_t rspBase = 0;
@@ -6979,9 +7106,6 @@ static __attribute__((noinline, no_instrument_function)) void *seg_addr(uintptr_
     GfxSegmentAddressCacheEntry* entry;
     void* resolved;
 
-    /* D_01000000 is a native linker symbol used as a stand-in for segment 1,
-     * so its result follows segment 1 rather than the pointer's numeric high
-     * byte. All other operands depend only on their own possible segment. */
     if (w1 == (uintptr_t)&D_01000000) {
         rspBase = (uintptr_t)rsp.segments[1];
         globalBase = gSegments[1];
@@ -6992,11 +7116,6 @@ static __attribute__((noinline, no_instrument_function)) void *seg_addr(uintptr_
         }
     }
 
-    /* Object display lists reuse small operands such as 0x06000000 with many
-     * different segment bases. Hashing only the operand made every object
-     * evict the previous object's resolution from the same direct-mapped
-     * slot. Include the selected base so those mappings occupy independent
-     * cache lines. */
     mappingBase = rspBase != 0 ? rspBase : globalBase;
     cacheIndex = ((w1 >> 3) ^ (w1 >> 13) ^ (mappingBase >> 4) ^ (mappingBase >> 15)) &
                  (GFX_SEGMENT_ADDRESS_CACHE_SIZE - 1);
@@ -7008,10 +7127,6 @@ static __attribute__((noinline, no_instrument_function)) void *seg_addr(uintptr_
 
     resolved = gfx_resolve_segmented_address_slow(w1);
 
-    /* A segment base may itself be segmented. Those uncommon chained maps
-     * depend on another segment too, so leave them to the compatibility path
-     * instead of caching an incomplete dependency. Native and direct global
-     * mappings are stable until the bases recorded above change. */
     uint8_t rspBaseSegment = rspBase >> 24;
     bool chainedRspBase = (rspBase != 0) && !gfx_addr_is_native(rspBase) &&
                           (rspBaseSegment != 0) && (rspBaseSegment < NUM_SEGMENTS);
@@ -7028,6 +7143,7 @@ static __attribute__((noinline, no_instrument_function)) void *seg_addr(uintptr_
     return gfx_resolve_segmented_address_slow(w1);
 #endif
 }
+#endif
 
 #if defined(TARGET_PSP) && defined(F3DEX_GBI_2)
 #define GFX_S2DEX_BG_MAX_UPLOAD_WIDTH 256U
@@ -7352,7 +7468,7 @@ static bool gfx_translate_dl_cursor(Gfx** cmdP) {
  * No command or asset pointer is read again on a hit. Material changes before
  * the suffix continue through the normal interpreter/pipeline state cache. */
 #ifndef OOT_PSP_NATIVE_MESH_ENTRIES
-#define OOT_PSP_NATIVE_MESH_ENTRIES 8
+#define OOT_PSP_NATIVE_MESH_ENTRIES 32
 #endif
 #define NATIVE_MESH_VERTICES 128
 #define NATIVE_MESH_INDICES 768
@@ -7528,12 +7644,13 @@ static bool gfx_native_visible(const struct NativeMesh* mesh) {
 
 static GFX_DL_HANDLER bool gfx_native_try(Gfx** cursor) {
     const uint32_t allowed = G_ZBUFFER | G_SHADE | G_SHADING_SMOOTH | G_CULL_FRONT | G_CULL_BACK;
-    if ((rsp.geometry_mode & ~allowed) || !(rsp.geometry_mode & G_SHADE) || gfx_hud_anchor_enabled()) return false;
-    /* Cheap rejection before touching the ordinary state preparer. */
-    if (rdp.combine_color_mul_env || rdp.combine_color_mul_prim || rdp.combine_alpha_mul_env ||
+    /* Cheap rejection before touching pipeline state or HUD anchor checks. */
+    if ((rdp.other_mode_l >> 30) == G_BL_CLR_FOG ||
+        (rsp.geometry_mode & ~allowed) || !(rsp.geometry_mode & G_SHADE) ||
+        rdp.combine_color_mul_env || rdp.combine_color_mul_prim || rdp.combine_alpha_mul_env ||
         rdp.combine_two_texture_blend || rdp.combine_flame_texture_atlas ||
         (rdp.other_mode_l & ZMODE_DEC) == ZMODE_DEC ||
-        (rdp.other_mode_l >> 30) == G_BL_CLR_FOG) return false;
+        gfx_hud_anchor_enabled()) return false;
     gfx_prepare_tri_pipeline_state(false);
     const struct TriPipelineState* state = &rendering_state.tri_pipeline;
     if (state->use_fog || state->material_texture || state->texture_tint_colors_corrected ||
@@ -8093,6 +8210,10 @@ void gfx_run(Gfx *commands) {
     uint64_t displayListEndUsec;
     uint64_t submitEndUsec;
 #endif
+#if defined(TARGET_PSP) && defined(MM_PSP_TRACE) && MM_PSP_TRACE
+    uint64_t traceDlStartUs;
+    uint64_t traceSubmitStartUs;
+#endif
 
     gfx_sp_reset();
     
@@ -8114,13 +8235,27 @@ void gfx_run(Gfx *commands) {
 #if defined(TARGET_PSP) && defined(OOTDEBUG)
     displayListStartUsec = OotPspPerformance_Now();
 #endif
+#if defined(TARGET_PSP) && defined(MM_PSP_TRACE) && MM_PSP_TRACE
+    traceDlStartUs = MmPspTrace_BeginSpan(MM_TRACE_THREAD_MAIN, MM_TRACE_EVT_DL_XLATE, 0,
+                                          (uint32_t)(uintptr_t)commands, 0, 0, 0);
+#endif
     gfx_run_dl(commands);
     gfx_flush();
+#if defined(TARGET_PSP) && defined(MM_PSP_TRACE) && MM_PSP_TRACE
+    MmPspTrace_EndSpan(MM_TRACE_THREAD_MAIN, MM_TRACE_EVT_DL_XLATE, 0,
+                       (uint32_t)(uintptr_t)commands, 0, traceDlStartUs, 0, 0);
+    traceSubmitStartUs = MmPspTrace_BeginSpan(MM_TRACE_THREAD_MAIN, MM_TRACE_EVT_GFX_SUBMIT, 0,
+                                              (uint32_t)(uintptr_t)commands, 0, 0, 0);
+#endif
 #if defined(TARGET_PSP) && defined(OOTDEBUG)
     displayListEndUsec = OotPspPerformance_Now();
 #endif
     gfx_rapi->end_frame();
     gfx_wapi->swap_buffers_begin();
+#if defined(TARGET_PSP) && defined(MM_PSP_TRACE) && MM_PSP_TRACE
+    MmPspTrace_EndSpan(MM_TRACE_THREAD_MAIN, MM_TRACE_EVT_GFX_SUBMIT, 0,
+                       (uint32_t)(uintptr_t)commands, 0, traceSubmitStartUs, 0, 0);
+#endif
 #if defined(TARGET_PSP) && defined(OOTDEBUG)
     submitEndUsec = OotPspPerformance_Now();
     OotPspPerformance_RecordGfx(

@@ -3,14 +3,11 @@
 #include "oot_psp_frame_interpolation.h"
 #endif
 
-void guMtxF2L(f32 mf[4][4], Mtx* m) {
+static inline void MmPsp_GuMtxF2LPack(const f32 mf[4][4], Mtx* m) {
     s32 i, j;
     s32 e1, e2;
     s32 *ai, *af;
 
-#if PLATFORM_PSP
-    OotPspFrameInterpolation_Record(m, mf, __builtin_return_address(0));
-#endif
     ai = (s32*)&m->m[0][0];
     af = (s32*)&m->m[2][0];
 
@@ -22,5 +19,20 @@ void guMtxF2L(f32 mf[4][4], Mtx* m) {
             *(af++) = ((e1 << 16) & 0xFFFF0000) | (e2 & 0xFFFF);
         }
     }
+}
+
+#if PLATFORM_PSP
+void OotPsp_GuMtxF2LWithSite(const float mf[4][4], void* m, const void* site) {
+    OotPspFrameInterpolation_Record(m, mf, site);
+    MmPsp_GuMtxF2LPack(mf, (Mtx*)m);
+}
+#endif
+
+void guMtxF2L(f32 mf[4][4], Mtx* m) {
+#if PLATFORM_PSP
+    OotPsp_GuMtxF2LWithSite(mf, m, __builtin_return_address(0));
+#else
+    MmPsp_GuMtxF2LPack(mf, m);
+#endif
 }
 

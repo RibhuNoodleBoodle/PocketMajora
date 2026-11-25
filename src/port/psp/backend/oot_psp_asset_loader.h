@@ -81,6 +81,9 @@ s32 OotPsp_AssetRead(void* ram, uintptr_t vrom, size_t size);
 s32 OotPsp_AssetReadAudio(void* ram, uintptr_t vrom, size_t size);
 s32 OotPsp_AssetReadAudioUrgent(void* ram, uintptr_t vrom, size_t size);
 s32 OotPsp_AssetReadHasForegroundPressure(void);
+u32 OotPsp_AssetBeginStreamGeneration(void);
+u32 OotPsp_AssetGetStreamGeneration(void);
+s32 OotPsp_AssetPrefetch(uintptr_t vrom, size_t size, u32 generation, u32 deadlineUs);
 const void* OotPsp_GetCachedAssetPointer(uintptr_t vrom, size_t size);
 const OotPspMessageEntry* OotPsp_FindMessageEntry(const OotPspMessageEntry* entries, size_t count, u16 textId);
 

@@ -1,0 +1,68 @@
+Gemini Hydrogen | Step 03 | Recover failed LCD presentation without releasing live buffers
+Role: IMPLEMENTER for the existing PocketMajora PSP port.
+Run git rev-parse --show-toplevel and work in that root. Read
+gemini_hydrogen/ASTRA_ANALYSIS.txt, PERFORMANCE_BASELINE_AND_ACCEPTANCE.txt,
+Gemini_Hydrogen_Step_03.txt and HANDOFF.txt (all in gemini_hydrogen/) before editing.
+Prerequisite: 01 display ownership observations. Check the actual evidence and open gates.
+Goal: real 40 rendered FPS on PSP-3000 at correct MM tick rate, uninterrupted
+audio, timely visible assets, N64 effects and stable saves/memory. Implement
+only this milestone and its specific regression coverage.
+
+Start with git branch --show-current, git status --short, git log -1 --oneline
+and git diff. Preserve the dirty baseline including the user's 40 FPS, audio,
+asset and VFPU work. Pin the baseline binary and diff digest. Scope technical
+changes to the named active paths and prove that normal callers use them.
+
+In src/port/psp/backend/gfx/gfx_scegu.c gfx_scegu_present_triple waits for
+sPendingBuffer in a vblank loop, then queues sDrawBuffer and records ownership.
+Query and queue return values are unchecked. backend/oot_psp_video_thread.c
+OotPspVideoThread_Wait depends on worker completion. Build a deterministic
+failure harness using tools/tests/test_psp_vsync.py and test_psp_video_thread.py.
+Reject set-buffer, fail the front query, and return the old front repeatedly.
+First show where the existing model would stop progressing using a bounded
+test harness, then implement checked transitions and a documented recovery
+deadline in vblanks. Keep the front, pending and GE-writing buffers distinct;
+on unknown ownership drain GE, re-query/reinitialize or surface a recoverable
+mode error. Avoid recycling uncertain storage. Release each accepted worker
+request exactly once including initialization fallback. Account for HOME,
+suspend, 240p, double buffering and mode switches.
+
+Run python3 tools/tests/test_psp_video_thread.py,
+python3 tools/tests/test_psp_vsync.py and python3 tools/tests/test_psp_graphics_resume.py.
+Acceptance: all fault cases terminate within the chosen bound with either a
+safe display or explicit recovery; zero unsafe front-buffer writes; healthy
+40 mode retains unique-presentation rate and vblank histogram within paired
+baseline variability. Record wake/queue error IDs and recovery time.
+
+Execution, evidence and finish
+------------------------------
+Use the CI toolchain from .github/workflows/psp-build.yml (PSPDEV v20261001,
+VME-compatible ME core, intraFont, MIPS binutils, PyYAML/colorama). Build with
+./psp.sh VERSION=n64-us and run python3 tools/run_psp_tests.py after substantive
+changes. Run the targeted tests above as you iterate. Correct failures; retain
+exact command, output and tool versions for anything blocked. Test PPSSPP and
+PSP-3000 whenever available. Log the actual mixer, device and run settings.
+Repeat matched inputs at 20/40 FPS and compare clock, position, collisions,
+input edges, quest/cutscene triggers, animation and audio event timing. Check
+60 FPS compatibility. Preserve original effects, thresholds and test fixtures.
+Record crashes, missing effects, audible glitches, pop-ins, actor stalls and
+memory spikes even if unrelated to this patch.
+
+Keep raw before/after traces, configs, metrics and clip IDs under
+~/PocketMajora-evidence/step-03/{before,after}/<device>/<run>/; keep ROM,
+save images and derived assets private. Summarize measured results and paths in
+HANDOFF.txt and update relevant technical documentation for changed behavior.
+If a gate fails, label partial, give failing command, affected files, log and
+safe recovery action, then stop this milestone. Mark unavailable hardware
+tests pending. Never fill in a passing measurement. For rollback preserve a
+copy of this milestone's diff and restore only its hunks; after commit prefer
+a targeted revert that preserves subsequent/user work.
+
+On full acceptance use git status, stage only this milestone (git add -p for
+mixed files), inspect git diff --cached and test that the staged result is
+reproducible on its documented prerequisite. If inseparable from uncommitted
+user hunks, document the dependency and withhold the commit. Never reset,
+force-push or commit unrelated work. Commit message: fix(video): recover failed PSP framebuffer handoffs
+Run git log -1 --format=%H, record the actual accepted hash in the handoff
+after success. No passing commit for a blocked or rejected hypothesis.
+Next eligible work: 04; 07 also requires 02, 05 and 06.

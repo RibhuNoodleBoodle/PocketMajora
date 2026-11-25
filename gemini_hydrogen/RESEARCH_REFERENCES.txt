@@ -1,0 +1,57 @@
+Verification ledger | 2026-11-24 UTC
+Primary local sources at main d3414c6 plus the recorded working-tree diff
+---------------------------------------------------------------------
+Makefile.psp (PSP_COMMON_DEFINES, source lists, per-object flags, MEMSIZE);
+.github/workflows/psp-build.yml (toolchain archive/hash and ME pin);
+psp.sh (tool checks); tools/run_psp_tests.py (suite discovery).
+docs/psp-port.md (Rendering and presentation, Audio and sleep); source and
+linked image decide when prose differs. Verify PSP headers under the selected
+PSPDEV installation at implementation time. None were found in the inspected
+standard locations here. Do not assume the latest web docs equal the CI pin.
+
+src/code/game.c:228, graph.c:227, src/port/psp/mm_psp_scheduler.c and
+backend/oot_psp_frame_interpolation.c give local timing semantics. For
+physical display ownership use backend/gfx/gfx_scegu.c:2489-2541. For ME and
+audio channel behavior use backend/oot_psp_audio_backend.c:37-99,1634-1665,
+2192-2347 and src/audio/lib/thread.c. For I/O and sleep ownership inspect
+backend/oot_psp_asset_loader.c:334-359,524-668,2679-2745. These are working
+tree line anchors. For actual local observations see the baseline ledger.
+
+Primary external pages checked on the date above
+-------------------------------------------------
+PPSSPP developer tools, sections on debug overlays, framedump tests, logging,
+ME for homebrew and debugger. The documented ME homebrew switch is introduced
+in 1.21; the installed snap is 1.20.4. Record which backend actually ran.
+CPU mixer emulation can exercise game correctness but cannot validate PSP ME
+completion interrupts or cache visibility.
+https://www.ppsspp.org/docs/development/developer-tools/
+
+PPSSPP developer tips, sections on profiling, cache, bandwidth and memory.
+Use native timing and actual cache-coherency tests when assessing a VFPU/GE
+change. General PSP advice supplies hypotheses, not site-specific speedups.
+https://www.ppsspp.org/docs/development/psp-internals/psp-development/
+
+PPSSPP system settings, sections on I/O timing, emulated CPU clock, recordings
+and PSP model. Configure and record the actual effective settings; the timing
+guidance discusses UMD behavior and gives no Memory Stick latency guarantee.
+https://www.ppsspp.org/docs/settings/system/
+
+PSPSDK audio frequency imports: 44.1 and 48 kHz output API choices. The port
+uses 32 kHz source and nominal 44.1 kHz software-resampled output. Confirm
+against the built version and target output mode.
+https://pspdev.github.io/pspsdk/group__Audio.html
+
+PSPSDK pspaudio.h, channel reservation, blocking output, stereo format and
+sample-count alignment in multiples of 64. The port's 768-frame normal chunk
+meets the documented count granularity. Returned errors require handling.
+https://pspdev.github.io/pspsdk/pspaudio_8h.html
+
+PSPSDK SAS core overview documents a distinct mixer API. PocketMajora uses
+its own MM command synthesis/ME mixer. SAS grain constants do not establish
+this port's deadlines or effect support.
+https://pspdev.github.io/pspsdk/group__SAS.html
+
+Community comparison repository, provenance/context for MM high-FPS experiments.
+No code or performance claims imported. The local divisor, scheduler, actor
+events and PSP presentation path are the relevant evidence here.
+https://github.com/wScottSh/mm-decomp-60fps

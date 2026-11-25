@@ -1,0 +1,241 @@
+PocketMajora | engineering analysis | 24 November 2026
+Scope is the active working tree on main at d3414c6, including its local changes.
+Paths and line numbers below refer to that snapshot. VERIFIED means source or
+build inspection. MEASURED identifies the environment. INFERRED identifies a
+mechanism that can produce the symptom. NEEDS TEST identifies the decisive check.
+No target bottleneck has been ranked by measured milliseconds yet.
+
+Inventory and evidence
+----------------------
+VERIFIED. Root Makefile includes Makefile.psp. psp.sh builds n64-us using
+psp-gcc; decompiled C, Allegrex/VFPU assembly, a C++ ME suspend unit, GU and
+a vendored OoT-derived backend. No tracked Cargo project or Pocket3D build
+dependency found. include/, src/code/, src/audio/, src/overlays/, rsp/, spec/,
+linker_scripts/ and src/port/psp/ serve different targets. Follow the PSP
+source selection in Makefile.psp:98 onwards. mm-sc/ is a separate untracked
+tree. assets/psp/n64-us contains build metadata; baseroms/, extracted/, local
+ROM and build/ are available. Distribution uses generated placeholders,
+tools/psp_port_mm_generate.py and tools/package_psp.py. Runtime pack lives in
+data/segments/oot_psp_assets.bin. video.ini, controls.ini, DVE plugin and
+mm-psp-save.bin belong to the installation. docs/psp-port.md is more current
+than README on the new 40 setting. CI pins PSPDEV v20261001 and VME library
+f153f0de12d42377b4f7ecec7e328dd2f0e825bb; also requires intraFont,
+MIPS binutils, Python/PyYAML/colorama. Existing ELF/PBP files predate this
+analysis. Rebuild the dirty baseline before attributing a measurement to it.
+
+VERIFIED. HEAD adds fault, graphics arena and ME fallback diagnostics; 4f0d784
+fixes a wake-diagnostics field; cb94ca9 addresses widescreen/fog/segments.
+Twenty tracked files have local edits, including -O3 selection, VFPU math,
+40 FPS support, interpolation history, loader caching and audio DMA sizes.
+Preserve this baseline. MEASURED (host/emulator history) see baseline report.
+No reproducible device performance CSV, crash trace or native N64 capture was
+identified. Feature-specific host tests establish narrower claims than full
+MM gameplay. Some libultra compatibility entries (e.g. voice and rumble in
+mm_psp_game.c) are stubs; classify any observed missing behavior separately.
+
+Execution and ownership map | VERIFIED
+-------------------------------------
+Within src/port/psp/, mm_psp_probe.c:161 main requests clocks 333/333/166,
+boots ME, resolves the install path, reserves the heap, sets controls and
+display, initializes renderer and assets. backend/oot_psp_asset_loader.c:410
+OotPsp_AssetInit -> OotPspAssetBuilder_Ensure in mm_psp_asset_builder.c:586.
+First boot validates user ROM, decompresses Yaz0 and transforms ranges into a
+temporary pack. Warm boot reuses pack, preloads persistent assets and initializes
+packed-block cache. RuntimePatch_Apply fills linked references. MmPspGame_Init
+in mm_psp_game.c:1048 initializes subsystems including audio. Persistent
+first-build decode costs belong in a separate benchmark from gameplay.
+
+mm_psp_probe.c:112 MmPsp_RunGame owns game-state lifetime, HOME/suspend polling,
+Graph_Update and video drain before state free. src/code/graph.c:241-369 ->
+GameState_Update in src/code/game.c:152 -> active main (Play_Main in z_play.c:
+1582). Play_UpdateMain:943 and Play_DrawMain:1194 drive simulation and display
+list construction. Inspect collision/actor/animation scopes inside those ticks;
+a draw callback may update state. game.c:228 initializes divisor 3, graph.c:227
+copies it into CfbInfo. Movement and transitions consume the divisor. Input
+enters through PadMgr_GetInput and MmPsp_ReadController. Do not execute draws,
+input edges, audio events or simulation twice to produce two images.
+
+z_play.c:1685 Play_SpawnScene -> Play_LoadFile -> Play_InitScene and
+Room_SetupFirstRoom. z_scene.c:610 Scene_ExecuteCommands dispatches room,
+actor, object, cutscene, sound and transition lists. z_room.c:576/606
+Room_RequestNewRoom / Room_ProcessRoomRequest use alternating room storage and
+a completion queue; inspect all callers before changing lifetimes. Persistent
+object banks load synchronously in z_scene.c:20; Object_UpdateEntries:77
+requests negative-ID slots then marks them ready on a later queue poll.
+Actor_SpawnSetupActors / Actor_SpawnTransitionActors and dynamic Actor_Spawn
+converge on z_actor.c:3523 Actor_SpawnAsChildAndCutscene, look up object slots
+and allocate per-instance state. Actor_Init:1154 or Actor_UpdateActor:2569
+runs the constructor when ready. Native overlay first-instance state matters.
+Actor_DrawAll:3148 tests culling, init, draw flags, room/lens; Actor_Delete:3678
+frees state. Room_DrawCullable:67 also selects/sorts static meshes. A camera
+turn can expose ready actors, newly needed textures or clipped room geometry;
+it does not itself imply a new ROM read. Cutscene commands/camera cuts, doors,
+item acquisition, dynamically spawned effects and sequence changes supply
+different dependency horizons. Prefetch immutable bytes only; execute trigger,
+collision, cutscene, sound and half-day activation on their source tick.
+
+Graph_ExecuteAndDraw builds WORK/POLY_OPA/POLY_XLU/OVERLAY, checks THGA
+exhaustion and submits via Graph_TaskSet00 -> mm_psp_scheduler.c:219ff
+Sched_SendNotifyMsg. SchedPsp_GetPassCount/PaceGfxTask selects 1/2/3 passes
+for normal play. It rebases overruns. backend/oot_psp_frame_interpolation.c
+groups matrices by identity/site, compares scene/room/camera and blends only
+valid matches. Two histories of 2048 matrices; overflow, actor reuse and
+discontinuities matter. OotPspRenderer_RenderTask -> gfx/gfx_fast3d.c
+interprets F3DEX2, material/state/vertex/texture conversion -> gfx_psp_submit.c
+and gfx_scegu.c (compiled via mm_psp_gfx_scegu.c). GE lists and textures must
+stay live through their fence. gfx_scegu_end_frame submits complete_frame to
+oot_psp_video_thread.c. Worker waits for GE and manages LCD front/draw/pending
+buffers; queue completion and scanout are distinct events.
+
+Graph_UpdateGame schedules game-side audio. backend/oot_psp_audio_backend.c
+ProducerThread -> TryRunUpdate -> src/audio/lib/thread.c:29 AudioThread_UpdateImpl
+waits for shared mixer state and prior DMA, processes sequence/load commands
+and builds synthesis; src/audio/lib/load.c and synthesis.c -> DmaMgr_AudioDmaHandler
+in mm_psp_game.c:496 -> pinned hit or serialized loader. Allegrex builds
+commands and the ME executes mixer work; CPU fallback shares output contract.
+ME cache writebacks/invalidation and completion precede PCM publication.
+OutputThread:2192 consumes ring, resamples into alternating stereo chunks and
+calls blocking audio driver output. Clock is independent of frame presentation.
+Power callback signals backend/oot_psp_suspend.c:86 OotPspSuspend_Poll on
+game thread for drain/volatile memory snapshot and coordinated restore.
+
+mm_psp_game.c:713-755 flash routines map pages to a 128 KiB in-memory image.
+SysFlashrom_WriteAsync flushes inline in 16 KiB pieces and exposes a pending
+result to MM. MmPsp_FlushFlash:217 opens the live image with TRUNC. Interrupted
+writes risk a partial save. Preserve old saves/results through recovery.
+
+Capacity ledger | allocations and limits, not measured peaks
+-----------------------------------------------------------
+64 MiB model + MEMSIZE=1 in Makefile.psp. 8 MiB system arena reserved independent
+of 1 MiB newlib heap. Main stack 256 KiB, callback 4 KiB, audio out 64 KiB,
+generation 128 KiB, video 64 KiB. Object_InitContext uses 1380/1470/1530/1580
+KiB inside game-state allocation depending on scene. Do not add it twice.
+Audio ring 16384 stereo s16 frames = 64 KiB, two 768-frame outputs = 6 KiB,
+external audio pool 2 MiB, plus ME state and AI buffers. Loader constants
+include 2 MiB asset window size, 64 KiB packed blocks, 4 MiB packed cache
+target/1 MiB minimum, 128 KiB direct-read chunks. Pinned caches include
+audiotable, audiobank, audioseq, link_animation, kanji, do_action. Targets may
+shrink/fail; inspect actual allocations and volatile ownership on each run.
+
+gfx_scegu.c:2060,2258-2358 selects EDRAM dynamically (2 MiB floor, DVE/4 MiB
+path). 512x272 LCD with 3 color and 1 depth buffer costs 1,114,112 bytes at
+16-bit color or 1,949,696 at 32-bit color, before shadow (64x64x4), padding,
+textures. 768-wide TV uses 2 color buffers with interlaced height handling;
+240p at narrow stride takes the triple path. Texture manager cap 1.25 MiB in
+psp_texture_manager.h:17; storage is RAM for the TV-capable allocation path.
+Three RAM background surfaces sized from maximum supported geometry plus
+on-demand motion blur storage; count mode-specific costs even on LCD. Record
+actual list/vertex high water, texture pool, BSS, stack slack, free and largest
+block at boot, transition overlap, busy scene, after teardown and wake.
+Reserve at least baseline worst observed demand plus measured transient overlap
+and audio needs before allocating speculative work. Absolute additional safe
+budget currently unknown. If contiguous headroom is insufficient, shed optional
+prefetch/cache bytes first and retry required requests at the legal transition.
+
+Hypotheses in implementation order | all NEED TEST unless stated
+---------------------------------------------------------------
+1. Measurement bias. oot_psp_performance.c:156,257,320 aggregates 60-frame
+windows under OOTDEBUG; active MM frame boundaries lack those begin/end calls.
+MmPsp_DiagLog:130 serializes open/append/close per logged event and is called
+from object-load and pending-actor paths. INFERRED logging can itself hitch.
+Use bounded per-thread events and deferred flush; alternatively sample fewer
+spans. Cost is trace RAM/CPU; overflow makes windows incomplete. Compare
+tracing on/off, latency with/without synchronous diagnostic writes. A negligible
+difference rejects logging as a cause. Gain sought is attributable measurements.
+
+2. Audio deadline. AudioThread_UpdateImpl waits for DMA and ME ownership;
+TryRunUpdate now also drains completion immediately after update. OutputThread
+injects silence and re-primes below one source chunk. A miss in the pinned
+audio window falls through to loader semaphore; urgent reads bypass the
+foreground wait but still need the lock. INFERRED misses can starve already
+playable PCM. Trace buffer trough vs ME/producer/cache/driver events. First
+bound the proven wait/advance publication; alternatively preload measured bank
+windows. Cost extra bandwidth/RAM or latency, risk cache incoherence or hiding
+starvation by muting. Expect zero gaps; full occupancy across audible glitches
+falsifies supply starvation; inspect resampler endpoints/voice data instead.
+
+3. Display/save correctness. gfx_scegu.c:2489-2517 waits repeatedly for
+sPendingBuffer without checking query/queue success; video waiter can block.
+A rejected flip is sufficient in a fault harness; occurrence on device unknown.
+Check return values, bound recovery and safely reacquire buffer ownership;
+fallback is a drained mode reset. Save flush truncation can destroy the last
+good image; use validated temp + recoverable previous generation after testing
+FAT rename semantics. Alternative double-slot protocol with legacy import.
+Costs transitional storage and extra I/O, risk stale buffers/wrong generation.
+Inject failure at each boundary; a correctly recovered prior/complete save
+and eventual worker release refute the proposed failures after the patch.
+
+4. I/O convoy. mm_psp_game.c:467 RequestAsync does read before notifying.
+oot_psp_asset_loader.c:347,830,1062,2679 shares sought file position, locks
+and cache slots. libultra_psp.c:500-551 uses 1 ms delays for blocking queue
+retries. load.c:1262,1740,1884 changed sync/slow/async batch sizes. First
+prefetch validated VROM ranges into owned staging; introduce bounded worker
+only where inline demand still dominates. Never unlock while holding a live
+evictable pointer. Larger transfers can improve throughput and extend tail
+latency. Trace bytes/seek/cache hit/lock wait and first-use slack. If all hot
+ranges were ready and frames still hitch, further read-ahead cannot help.
+
+5. Actor/visibility. Constructors and ZeldaArena_Malloc run inline, pending
+banks delay init, materials can import on first draw. Shared culling flags
+affect update eligibility. INFERRED CPU visibility in widescreen, delayed
+object readiness, or unmatched interpolation may each look like pop-in.
+Warm only measured immutable dependencies of an upcoming actor, separate
+draw-only projection correction when demonstrated. Consider instance pooling
+only after allocator timing proves expensive. Costs live memory/draw calls;
+wrong lifetimes can change schedules or leak identities. Record per-actor
+ready/init/cull/first drawn + capture. On-time assets and correct projection
+redirect investigation to room clipping, material state or source-native reveal.
+
+6. Renderer throughput. Two passes call RenderTask on the same display list
+with different fractions. gfx_fast3d.c:2155,2904,4774,5970 and GU submission
+do repeated lookups, conversion or state work depending on material. Native
+mesh caching, batches and fast paths already exist. Measure second-pass CPU,
+flushes, GE wait, texture imports, actor ticks and idle separately. Reuse only
+immutable work with generation-aware keys; second choice is reduce measured
+state flushes, retaining translucent order. Costs memory and invalidations;
+wrong keys corrupt animated water, palettes or reused actor addresses. If GE
+fill or original game update dominates, abandon replay caching and address
+that measured stage. Only a real moving-scene trace can estimate gain.
+
+7. Cadence and parity. A paced 25 ms start can coincide with an occupied draw
+buffer; 60 Hz scanout must alternate refresh holds. Compare deadlines to GE
+finish and actual front buffer; tune only avoidable wait. Optionally improve
+safe transform coverage if intermediate screenshots show snapping. Advancing
+feedback twice per tick can change blur decay; compare time-matched captures.
+Remedies cost history memory, validation and potentially passes. No increase
+in unique moving frames or unchanged visual error falsifies benefit.
+See parity matrix for individual effect and state tests. Never count suppressing
+a layer, skipping simulation or clipping more of a scene as an improvement.
+
+Quantitative gains before device tracing are unknown. Priorities above use
+source-proven mechanisms, impact of failure, and reversibility. Branch to the
+dominant measured cost if breakouts invalidate a hypothesis. Reconcile all
+changes with flash, HOME, video settings, sleep and asset generation on wake.
+
+Additional blocking sites to distinguish in the trace
+----------------------------------------------------
+* gfx_scegu_reserve_list_memory finishes and synchronizes a full list;
+  gfx_scegu_sync_texture_cache fences reuse on eviction. gfx_scegu_read_depth
+  joins the video worker before reading even one depth result. Attribute a wait
+  to its caller, list occupancy and material, rather than to generic GPU time.
+  gfx_psp_submit.h caps vertex arena at 2 MiB, list at 256 KiB, batches at
+  12 draws / 220 triangles. Record rollovers, inline bytes and 64-byte-aligned
+  vertex consumption. First try reducing measured redundant state/imports;
+  dependent depth queries must see the correct completed image. Defer a read
+  only if equivalent tick semantics are established. Few rollovers/short joins
+  rule this out as the dominant cost.
+* Play_LoadFile (src/code/z_play.c:1652ff) tail-allocates and performs synchronous
+  scene DMA. On a cache miss storage can dominate this boundary. Room meshes
+  and objects have separate request and activation boundaries. Keep these
+  timings distinct from overlay/state malloc/free, first texture swizzle,
+  motion-blur allocation, synchronous save flush and optional diag log writes.
+* OotPspAudio_Update (backend/oot_psp_audio_backend.c:3608) runs updates on the
+  game thread if the producer thread is absent. Distinguish producer startup
+  failure from CPU mixing fallback, which can still run on the producer.
+  Record thread creation result and actual thread ID for each update. A missed
+  60 Hz producer tick does not by itself imply an audible outage.
+* Stack usage, full-screen history, GE texture storage fallback and packed asset
+  cache occupancy must be measured concurrently. Set optional allocation quota
+  from the smaller of spare total bytes and contiguous bytes above the largest
+  future mandatory allocation observed on the transition route. Stress with
+  allocation failure and verify correct recovery before admitting more prefetch.

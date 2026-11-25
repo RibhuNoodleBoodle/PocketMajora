@@ -1,4 +1,5 @@
 #include "oot_psp_video_thread.h"
+#include "mm_psp_trace.h"
 
 #include <pspkernel.h>
 #include <stdbool.h>
@@ -21,6 +22,9 @@ static int OotPspVideoThread_Run(SceSize args, void* argp) {
     (void)args;
     (void)argp;
 
+#if defined(MM_PSP_TRACE) && MM_PSP_TRACE
+    MmPspTrace_RegisterThread(MM_TRACE_THREAD_VIDEO);
+#endif
     for (;;) {
         sceKernelWaitSema(sRequestSema, 1, NULL);
         sCompleteFrame();
@@ -84,5 +88,12 @@ void OotPspVideoThread_Submit(void (*completeFrame)(void)) {
     }
     sCompleteFrame = completeFrame;
     sFramePending = true;
-    sceKernelSignalSema(sRequestSema, 1);
+    if (sceKernelSignalSema(sRequestSema, 1) < 0) {
+        sFramePending = false;
+        sCompleteFrame = NULL;
+        completeFrame();
+#if OOT_PSP_WAKE_DIAGNOSTICS
+        sCompletedFrames++;
+#endif
+    }
 }

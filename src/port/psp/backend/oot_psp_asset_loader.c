@@ -4,6 +4,7 @@
 #include "oot_psp_dve.h"
 #include "oot_psp_memory.h"
 #include "mm_psp_diag_log.h"
+#include "mm_psp_trace.h"
 #include "segment_symbols.h"
 
 #include <pspdmac.h>
@@ -29,9 +30,9 @@
 #define OOT_PSP_PACKED_CACHE_ALLOC_STEP     (1024 * 1024)
 #define OOT_PSP_PACKED_CACHE_MAX_BLOCK_COUNT \
     (OOT_PSP_PACKED_CACHE_TARGET_SIZE / OOT_PSP_PACKED_CACHE_BLOCK_SIZE)
-#define OOT_PSP_PACKED_CACHE_LOOKUP_COUNT     256
-#define OOT_PSP_NATIVE_TEXTURE_RANGE_CACHE_COUNT 8
-#define OOT_PSP_NATIVE_ASSET_RANGE_CACHE_COUNT   8
+#define OOT_PSP_PACKED_CACHE_LOOKUP_COUNT     1024
+#define OOT_PSP_NATIVE_TEXTURE_RANGE_CACHE_COUNT 32
+#define OOT_PSP_NATIVE_ASSET_RANGE_CACHE_COUNT   32
 #define OOT_PSP_NATIVE_BYTE_RANGE_PAGE_SHIFT     10
 #define OOT_PSP_NATIVE_BYTE_RANGE_CACHE_COUNT    256
 #define OOT_PSP_ASSET_RANGE_SERIAL_CACHE_SET_COUNT 128
@@ -170,6 +171,27 @@ static OotPspPinnedAssetWindowCache sOotPspPinnedAssetCaches[] = {
     { OOT_PSP_DO_ACTION_ASSET_NAME, { NULL, NULL, 0, 0, 0, 0, false, false } },
 };
 #define OOT_PSP_PINNED_ASSET_CACHE_COUNT (sizeof(sOotPspPinnedAssetCaches) / sizeof(sOotPspPinnedAssetCaches[0]))
+#define OOT_PSP_PREFETCH_QUEUE_CAPACITY 32
+#define OOT_PSP_PREFETCH_CHUNK_SIZE 0x4000
+#define OOT_PSP_PREFETCH_MAX_SIZE (512U * 1024U)
+
+typedef struct OotPspPrefetchEntry {
+    size_t fileOffset;
+    size_t size;
+    u32 generation;
+    u32 deadlineUs;
+    u32 order;
+    s32 active;
+} OotPspPrefetchEntry;
+
+static OotPspPrefetchEntry sOotPspPrefetchQueue[OOT_PSP_PREFETCH_QUEUE_CAPACITY];
+static u8 sOotPspPrefetchStaging[OOT_PSP_PACKED_CACHE_BLOCK_SIZE] __attribute__((aligned(64)));
+static volatile u32 sOotPspPrefetchGeneration = 1;
+static u32 sOotPspPrefetchNextOrder = 1;
+static SceUID sOotPspPrefetchQueueSema = -1;
+static SceUID sOotPspPrefetchWorkSema = -1;
+static SceUID sOotPspPrefetchThreadId = -1;
+static s32 sOotPspPrefetchThreadInitTried = false;
 
 static void OotPsp_ClearPackedAssetCache(void);
 static void OotPsp_InitPackedAssetCache(void);
@@ -1121,6 +1143,71 @@ static s32 OotPsp_ReadPackedAssetFileRange(const OotPspExternalAsset* asset, siz
         return true;
     }
 
+    if (sOotPspPackedCacheData != NULL) {
+        size_t headOffset = packedOffset & (OOT_PSP_PACKED_CACHE_BLOCK_SIZE - 1);
+
+        if (headOffset != 0) {
+            size_t headRoom = OOT_PSP_PACKED_CACHE_BLOCK_SIZE - headOffset;
+            size_t headSize = size < headRoom ? size : headRoom;
+
+            if (!OotPsp_ReadPackedAssetFileRangeCached(fd, path, packedOffset, out, headSize, useVfpuCopy,
+                                                       allowAudioYield)) {
+                return false;
+            }
+            packedOffset += headSize;
+            out += headSize;
+            size -= headSize;
+            if (size != 0) {
+                OotPsp_CooperateWithAudioRead(allowAudioYield, &sOotPspPackedAssetPositionKnown);
+            }
+        }
+
+        while (size >= OOT_PSP_PACKED_CACHE_BLOCK_SIZE) {
+            size_t blockIndex = packedOffset / OOT_PSP_PACKED_CACHE_BLOCK_SIZE;
+            OotPspPackedAssetCacheBlock* block = OotPsp_FindPackedCacheBlock(blockIndex);
+
+            if ((block != NULL) && (block->dataSize == OOT_PSP_PACKED_CACHE_BLOCK_SIZE)) {
+                size_t slot = (size_t)(block - sOotPspPackedCacheBlocks);
+
+                OotPsp_CopyAssetBytes(out, OotPsp_PackedCacheBlockData(slot), OOT_PSP_PACKED_CACHE_BLOCK_SIZE,
+                                      useVfpuCopy);
+                packedOffset += OOT_PSP_PACKED_CACHE_BLOCK_SIZE;
+                out += OOT_PSP_PACKED_CACHE_BLOCK_SIZE;
+                size -= OOT_PSP_PACKED_CACHE_BLOCK_SIZE;
+            } else {
+                size_t directBytes = OOT_PSP_PACKED_CACHE_BLOCK_SIZE;
+
+                while ((directBytes + OOT_PSP_PACKED_CACHE_BLOCK_SIZE) <= size) {
+                    size_t nextBlockIndex = (packedOffset + directBytes) / OOT_PSP_PACKED_CACHE_BLOCK_SIZE;
+
+                    if (OotPsp_FindPackedCacheBlock(nextBlockIndex) != NULL) {
+                        break;
+                    }
+                    directBytes += OOT_PSP_PACKED_CACHE_BLOCK_SIZE;
+                }
+
+                if (!OotPsp_ReadPackedOpenFileRange(fd, path, packedOffset, out, directBytes,
+                                                    OOT_PSP_PACKED_DIRECT_READ_CHUNK_SIZE, allowAudioYield)) {
+                    return false;
+                }
+                packedOffset += directBytes;
+                out += directBytes;
+                size -= directBytes;
+            }
+
+            if (size != 0) {
+                OotPsp_CooperateWithAudioRead(allowAudioYield, &sOotPspPackedAssetPositionKnown);
+            }
+        }
+
+        if (size == 0) {
+            return true;
+        }
+        if (OotPsp_ReadPackedAssetFileRangeCached(fd, path, packedOffset, out, size, useVfpuCopy, allowAudioYield)) {
+            return true;
+        }
+    }
+
     maxReadChunk = (size >= OOT_PSP_PACKED_DIRECT_READ_MIN_SIZE)
                        ? OOT_PSP_PACKED_DIRECT_READ_CHUNK_SIZE
                        : (allowAudioYield ? OOT_PSP_ASSET_READ_CHUNK_SIZE
@@ -1374,6 +1461,34 @@ static s32 OotPsp_IsExternalAssetSpanContiguous(size_t index, uintptr_t vromStar
     return true;
 }
 
+static const u8* OotPsp_FindResidentPinnedCacheData(uintptr_t normalizedVrom, size_t size,
+                                                    const OotPspExternalAsset* asset) {
+    size_t i;
+
+    if (sOotPspAssetsSuspended || (asset == NULL) || (normalizedVrom < asset->vromStart)) {
+        return NULL;
+    }
+
+    for (i = 0; i < OOT_PSP_PINNED_ASSET_CACHE_COUNT; i++) {
+        const OotPspAssetWindowCache* cache = &sOotPspPinnedAssetCaches[i].cache;
+
+        if ((cache->asset == asset) && (cache->data != NULL) && !cache->loading) {
+            size_t offset = normalizedVrom - asset->vromStart;
+
+            if (offset >= cache->offset) {
+                size_t cacheOffset = offset - cache->offset;
+
+                if ((cacheOffset <= cache->dataSize) && (size <= (cache->dataSize - cacheOffset))) {
+                    return &cache->data[cacheOffset];
+                }
+            }
+            break;
+        }
+    }
+
+    return NULL;
+}
+
 const void* OotPsp_GetCachedAssetPointer(uintptr_t vrom, size_t size) {
     uintptr_t normalizedVrom;
     uintptr_t normalizedEnd;
@@ -1391,6 +1506,11 @@ const void* OotPsp_GetCachedAssetPointer(uintptr_t vrom, size_t size) {
     asset = OotPsp_FindContainingExternalAsset(normalizedVrom, NULL);
     if ((asset == NULL) || (normalizedEnd > asset->vromEnd)) {
         return NULL;
+    }
+
+    ptr = OotPsp_FindResidentPinnedCacheData(normalizedVrom, size, asset);
+    if (ptr != NULL) {
+        return ptr;
     }
 
     OotPsp_InitAssetSema();
@@ -1912,14 +2032,26 @@ static void OotPsp_RegisterLoadedAssetRanges(void* ram, size_t size, uintptr_t v
 
     vromEnd = vromStart + size;
 
-    for (i = 0; i < gOotPspExternalAssetTextureRangeCount; i++) {
+    {
+        size_t left = 0;
+        size_t right = gOotPspExternalAssetTextureRangeCount;
+
+        while (left < right) {
+            size_t mid = left + ((right - left) / 2);
+
+            if (gOotPspExternalAssetTextureRanges[mid].vromEnd <= vromStart) {
+                left = mid + 1;
+            } else {
+                right = mid;
+            }
+        }
+        i = left;
+    }
+
+    for (; i < gOotPspExternalAssetTextureRangeCount; i++) {
         const OotPspExternalAssetTextureRange* textureRange = &gOotPspExternalAssetTextureRanges[i];
         uintptr_t overlapStart;
         uintptr_t overlapEnd;
-
-        if (textureRange->vromEnd <= vromStart) {
-            continue;
-        }
 
         if (textureRange->vromStart >= vromEnd) {
             break;
@@ -1948,7 +2080,7 @@ static u32 OotPsp_NextLoadedAssetSerial(void) {
 }
 
 static s32 OotPsp_TryReadAssetCache(const OotPspExternalAsset* asset, void* ram, uintptr_t vrom, size_t size,
-                                    s32 useVfpuCopy, s32 allowAudioYield) {
+                                    s32 useVfpuCopy, s32 allowAudioYield, s32 trackLoadedRanges) {
     OotPspAssetWindowCache* cache;
     size_t offset;
     size_t cacheOffset;
@@ -1972,7 +2104,9 @@ static s32 OotPsp_TryReadAssetCache(const OotPspExternalAsset* asset, void* ram,
         return false;
     }
     OotPsp_CopyAssetBytes(ram, &cache->data[cacheOffset], size, useVfpuCopy);
-    OotPsp_RegisterLoadedAssetRanges(ram, size, vrom, asset, OotPsp_NextLoadedAssetSerial());
+    if (trackLoadedRanges) {
+        OotPsp_RegisterLoadedAssetRanges(ram, size, vrom, asset, OotPsp_NextLoadedAssetSerial());
+    }
     return true;
 }
 
@@ -2267,6 +2401,16 @@ s32 OotPsp_GetNativeExternalTextureMappingRange(const void* ptr, uintptr_t* ramS
     }
 
     {
+        const OotPspLoadedAssetRange* range = OotPsp_FindCachedNativeByteRange(ram);
+
+        if (range != NULL) {
+            *ramStart = range->ramStart;
+            *ramEnd = range->ramEnd;
+            return true;
+        }
+    }
+
+    {
         const OotPspLoadedAssetRange* range = OotPsp_FindCachedNativeTextureRange(ram);
 
         if (range != NULL) {
@@ -2460,7 +2604,7 @@ s32 OotPsp_MapNativeExternalTextureByte(const void* ptr, const void** mapped) {
 }
 
 static s32 OotPsp_AssetReadLocked(void* ram, uintptr_t vrom, size_t size, s32 useVfpuCopy,
-                                  s32 allowAudioYield) {
+                                  s32 allowAudioYield, s32 trackLoadedRanges) {
     uintptr_t normalizedVrom;
     uintptr_t normalizedEnd;
     uintptr_t cursor;
@@ -2472,7 +2616,9 @@ static s32 OotPsp_AssetReadLocked(void* ram, uintptr_t vrom, size_t size, s32 us
         return OOT_PSP_ASSET_READ_OK;
     }
 
-    OotPsp_ClearLoadedAssetRange(ram, size);
+    if (trackLoadedRanges) {
+        OotPsp_ClearLoadedAssetRange(ram, size);
+    }
 
     if ((vrom > (UINTPTR_MAX - size)) ||
         !OotPsp_NormalizeVromRange(vrom, vrom + size, &normalizedVrom, &normalizedEnd)) {
@@ -2487,7 +2633,7 @@ static s32 OotPsp_AssetReadLocked(void* ram, uintptr_t vrom, size_t size, s32 us
     }
 
     if (OotPsp_TryReadAssetCache(&gOotPspExternalAssets[assetIndex], ram, normalizedVrom, size, useVfpuCopy,
-                                 allowAudioYield)) {
+                                 allowAudioYield, trackLoadedRanges)) {
         return OOT_PSP_ASSET_READ_OK;
     }
 
@@ -2509,7 +2655,7 @@ static s32 OotPsp_AssetReadLocked(void* ram, uintptr_t vrom, size_t size, s32 us
         chunkRemaining = asset->vromEnd - cursor;
         chunkSize = remaining < chunkRemaining ? remaining : chunkRemaining;
         chunkOut = out;
-        chunkSerial = OotPsp_NextLoadedAssetSerial();
+        chunkSerial = trackLoadedRanges ? OotPsp_NextLoadedAssetSerial() : 0;
 
         const s32 useBlockCache = chunkSize < OOT_PSP_PACKED_DIRECT_READ_MIN_SIZE;
 
@@ -2521,7 +2667,9 @@ static s32 OotPsp_AssetReadLocked(void* ram, uintptr_t vrom, size_t size, s32 us
         out += chunkSize;
         cursor += chunkSize;
         remaining -= chunkSize;
-        OotPsp_RegisterLoadedAssetRanges(chunkOut, chunkSize, chunkVromStart, asset, chunkSerial);
+        if (trackLoadedRanges) {
+            OotPsp_RegisterLoadedAssetRanges(chunkOut, chunkSize, chunkVromStart, asset, chunkSerial);
+        }
 
         if (remaining != 0) {
             assetIndex++;
@@ -2552,6 +2700,47 @@ static void OotPsp_WaitForForegroundAssetReads(void) {
 
 static s32 OotPsp_AssetReadInternal(void* ram, uintptr_t vrom, size_t size, s32 isAudioRead, s32 urgentAudioRead) {
     s32 status;
+#if defined(MM_PSP_TRACE) && MM_PSP_TRACE
+    MmPspTraceThreadSlot traceSlot = MmPspTrace_CurrentSlot();
+    u16 traceFlags = (u16)((isAudioRead ? MM_TRACE_FLAG_SCOPED : 0U) |
+                           (urgentAudioRead ? MM_TRACE_FLAG_URGENT : 0U));
+    u64 readStartUs = MmPspTrace_BeginSpan(traceSlot, MM_TRACE_EVT_ASSET_READ, traceFlags,
+                                           (u32)vrom, 0, (u64)size, (u64)isAudioRead);
+    u64 lockStartUs;
+#endif
+
+    if (size == 0) {
+#if defined(MM_PSP_TRACE) && MM_PSP_TRACE
+        MmPspTrace_EndSpan(traceSlot, MM_TRACE_EVT_ASSET_READ, (u16)(traceFlags | MM_TRACE_FLAG_CACHE_HIT),
+                           (u32)vrom, 0, readStartUs, 0, 0);
+#endif
+        return OOT_PSP_ASSET_READ_OK;
+    }
+
+    if (isAudioRead) {
+        uintptr_t normalizedVrom;
+        uintptr_t normalizedEnd;
+        const OotPspExternalAsset* asset;
+        const u8* cached;
+
+        if ((vrom <= (UINTPTR_MAX - size)) &&
+            OotPsp_NormalizeVromRange(vrom, vrom + size, &normalizedVrom, &normalizedEnd)) {
+            asset = OotPsp_FindContainingExternalAsset(normalizedVrom, NULL);
+            if ((asset != NULL) && (normalizedEnd <= asset->vromEnd)) {
+                cached = OotPsp_FindResidentPinnedCacheData(normalizedVrom, size, asset);
+                if (cached != NULL) {
+                    memcpy(ram, cached, size);
+                    OotPsp_WritebackCacheRange(ram, size);
+#if defined(MM_PSP_TRACE) && MM_PSP_TRACE
+                    MmPspTrace_EndSpan(traceSlot, MM_TRACE_EVT_ASSET_READ,
+                                       (u16)(traceFlags | MM_TRACE_FLAG_CACHE_HIT),
+                                       (u32)vrom, 0, readStartUs, (u64)size, 1);
+#endif
+                    return OOT_PSP_ASSET_READ_OK;
+                }
+            }
+        }
+    }
 
     OotPsp_InitAssetSema();
     if (isAudioRead) {
@@ -2562,13 +2751,21 @@ static s32 OotPsp_AssetReadInternal(void* ram, uintptr_t vrom, size_t size, s32 
         sOotPspForegroundAssetReadWaiters++;
     }
 
+#if defined(MM_PSP_TRACE) && MM_PSP_TRACE
+    lockStartUs = MmPspTrace_BeginSpan(traceSlot, MM_TRACE_EVT_ASSET_LOCK_WAIT, traceFlags,
+                                       (u32)vrom, 0, (u64)size, 0);
+#endif
     OotPsp_LockAssetLoader();
+#if defined(MM_PSP_TRACE) && MM_PSP_TRACE
+    MmPspTrace_EndSpan(traceSlot, MM_TRACE_EVT_ASSET_LOCK_WAIT, traceFlags,
+                       (u32)vrom, 0, lockStartUs, (u64)size, 0);
+#endif
     if (!isAudioRead) {
         sOotPspForegroundAssetReadWaiters--;
         sOotPspForegroundAssetReadActive++;
     }
 
-    status = OotPsp_AssetReadLocked(ram, vrom, size, !isAudioRead, !isAudioRead);
+    status = OotPsp_AssetReadLocked(ram, vrom, size, !isAudioRead, !isAudioRead, !isAudioRead);
     if (isAudioRead && (status == OOT_PSP_ASSET_READ_OK)) {
         /* Command construction and mixing can consume audio assets on the ME
          * immediately after this call. Publish the loaded bytes once here so
@@ -2579,6 +2776,11 @@ static s32 OotPsp_AssetReadInternal(void* ram, uintptr_t vrom, size_t size, s32 
         sOotPspForegroundAssetReadActive--;
     }
     OotPsp_UnlockAssetLoader();
+#if defined(MM_PSP_TRACE) && MM_PSP_TRACE
+    MmPspTrace_EndSpan(traceSlot, MM_TRACE_EVT_ASSET_READ,
+                       (status == OOT_PSP_ASSET_READ_OK) ? traceFlags : (u16)(traceFlags | MM_TRACE_FLAG_ERROR),
+                       (u32)vrom, 0, readStartUs, (u64)size, (u64)status);
+#endif
     return status;
 }
 
@@ -2596,4 +2798,377 @@ s32 OotPsp_AssetReadAudioUrgent(void* ram, uintptr_t vrom, size_t size) {
 
 s32 OotPsp_AssetReadHasForegroundPressure(void) {
     return (sOotPspForegroundAssetReadWaiters > 0) || (sOotPspForegroundAssetReadActive > 0);
+}
+
+static void OotPsp_LockPrefetchQueue(void) {
+    if (sOotPspPrefetchQueueSema >= 0) {
+        sceKernelWaitSema(sOotPspPrefetchQueueSema, 1, NULL);
+    }
+}
+
+static void OotPsp_UnlockPrefetchQueue(void) {
+    if (sOotPspPrefetchQueueSema >= 0) {
+        sceKernelSignalSema(sOotPspPrefetchQueueSema, 1);
+    }
+}
+
+static s32 OotPsp_PrefetchShouldYield(u32 generation) {
+    return sOotPspAssetsSuspended || sOotPspPackedAssetUnavailable ||
+           (generation != sOotPspPrefetchGeneration) || OotPspAudioBackend_NeedsRefillDuringIo() ||
+           OotPsp_AssetReadHasForegroundPressure();
+}
+
+static s32 OotPsp_PopNextPrefetchEntry(u32 generation, OotPspPrefetchEntry* outEntry) {
+    size_t i;
+    size_t bestIdx = OOT_PSP_PREFETCH_QUEUE_CAPACITY;
+
+    if (outEntry == NULL) {
+        return false;
+    }
+
+    OotPsp_LockPrefetchQueue();
+    for (i = 0; i < OOT_PSP_PREFETCH_QUEUE_CAPACITY; i++) {
+        OotPspPrefetchEntry* entry = &sOotPspPrefetchQueue[i];
+
+        if (!entry->active) {
+            continue;
+        }
+        if (entry->generation != generation) {
+            entry->active = false;
+            continue;
+        }
+        if ((bestIdx == OOT_PSP_PREFETCH_QUEUE_CAPACITY) ||
+            (entry->deadlineUs < sOotPspPrefetchQueue[bestIdx].deadlineUs) ||
+            ((entry->deadlineUs == sOotPspPrefetchQueue[bestIdx].deadlineUs) &&
+             ((s32)(entry->order - sOotPspPrefetchQueue[bestIdx].order) < 0))) {
+            bestIdx = i;
+        }
+    }
+
+    if (bestIdx < OOT_PSP_PREFETCH_QUEUE_CAPACITY) {
+        *outEntry = sOotPspPrefetchQueue[bestIdx];
+        sOotPspPrefetchQueue[bestIdx].active = false;
+        OotPsp_UnlockPrefetchQueue();
+        return true;
+    }
+
+    OotPsp_UnlockPrefetchQueue();
+    return false;
+}
+
+static void OotPsp_CommitPrefetchedBlock(size_t blockIndex, size_t dataSize) {
+    OotPspPackedAssetCacheBlock* block;
+    size_t slot;
+
+    if ((sOotPspPackedCacheData == NULL) || (dataSize == 0) || (dataSize > OOT_PSP_PACKED_CACHE_BLOCK_SIZE)) {
+        return;
+    }
+
+    if (OotPsp_FindPackedCacheBlock(blockIndex) != NULL) {
+        return;
+    }
+
+    block = OotPsp_SelectPackedCacheBlock();
+    if (block == NULL) {
+        return;
+    }
+
+    slot = (size_t)(block - sOotPspPackedCacheBlocks);
+    if (block->valid) {
+        size_t oldLookupIndex = block->blockIndex & (OOT_PSP_PACKED_CACHE_LOOKUP_COUNT - 1);
+
+        if (sOotPspPackedCacheLookup[oldLookupIndex] == block) {
+            sOotPspPackedCacheLookup[oldLookupIndex] = NULL;
+        }
+    }
+
+    memcpy(OotPsp_PackedCacheBlockData(slot), sOotPspPrefetchStaging, dataSize);
+    block->blockIndex = blockIndex;
+    block->dataSize = dataSize;
+    block->lastUsed = OotPsp_NextAssetCacheClock();
+    block->loading = false;
+    block->valid = true;
+    sOotPspPackedCacheLookup[blockIndex & (OOT_PSP_PACKED_CACHE_LOOKUP_COUNT - 1)] = block;
+}
+
+static s32 OotPsp_PrefetchOneBlock(const OotPspPrefetchEntry* entry, size_t blockIndex) {
+    char pathBuffer[384];
+    const char* path;
+    SceUID fd;
+    size_t blockStart = blockIndex * OOT_PSP_PACKED_CACHE_BLOCK_SIZE;
+    size_t readSize = OOT_PSP_PACKED_CACHE_BLOCK_SIZE;
+    size_t blockOffset = 0;
+
+    if ((entry == NULL) || (entry->generation != sOotPspPrefetchGeneration) || sOotPspAssetsSuspended ||
+        sOotPspPackedAssetUnavailable) {
+        return false;
+    }
+
+    OotPsp_LockAssetLoader();
+    if ((sOotPspPackedCacheData == NULL) || sOotPspAssetsSuspended ||
+        (entry->generation != sOotPspPrefetchGeneration)) {
+        OotPsp_UnlockAssetLoader();
+        return false;
+    }
+
+    if (OotPsp_FindPackedCacheBlock(blockIndex) != NULL) {
+        OotPsp_UnlockAssetLoader();
+        return true;
+    }
+
+    fd = OotPsp_OpenPackedAssetFile(&path, pathBuffer, sizeof(pathBuffer));
+    if (fd < 0) {
+        OotPsp_UnlockAssetLoader();
+        return false;
+    }
+
+    if (sOotPspPackedAssetSizeKnown) {
+        if (blockStart >= sOotPspPackedAssetSize) {
+            OotPsp_UnlockAssetLoader();
+            return true;
+        }
+        if (readSize > (sOotPspPackedAssetSize - blockStart)) {
+            readSize = sOotPspPackedAssetSize - blockStart;
+        }
+    }
+
+    while (blockOffset < readSize) {
+        size_t filePos;
+        size_t chunkRemaining = readSize - blockOffset;
+        int chunk = (chunkRemaining > OOT_PSP_PREFETCH_CHUNK_SIZE) ? OOT_PSP_PREFETCH_CHUNK_SIZE : (int)chunkRemaining;
+        int got;
+
+        if (OotPsp_PrefetchShouldYield(entry->generation)) {
+            sOotPspPackedAssetPositionKnown = false;
+            OotPsp_UnlockAssetLoader();
+            if (sOotPspAssetsSuspended || (entry->generation != sOotPspPrefetchGeneration)) {
+                return false;
+            }
+            sceKernelDelayThread(OOT_PSP_AUDIO_READ_BACKOFF_USEC);
+            OotPsp_LockAssetLoader();
+            if ((sOotPspPackedCacheData == NULL) || sOotPspAssetsSuspended ||
+                (entry->generation != sOotPspPrefetchGeneration)) {
+                OotPsp_UnlockAssetLoader();
+                return false;
+            }
+            if (OotPsp_FindPackedCacheBlock(blockIndex) != NULL) {
+                OotPsp_UnlockAssetLoader();
+                return true;
+            }
+            fd = OotPsp_OpenPackedAssetFile(&path, pathBuffer, sizeof(pathBuffer));
+            if (fd < 0) {
+                OotPsp_UnlockAssetLoader();
+                return false;
+            }
+            continue;
+        }
+
+        filePos = blockStart + blockOffset;
+        if (filePos > 0x7FFFFFFFUL) {
+            OotPsp_UnlockAssetLoader();
+            return false;
+        }
+        if (!sOotPspPackedAssetPositionKnown || (sOotPspPackedAssetPosition != filePos)) {
+            if (sceIoLseek32(fd, (int)filePos, PSP_SEEK_SET) < 0) {
+                sOotPspPackedAssetPositionKnown = false;
+                OotPsp_UnlockAssetLoader();
+                return false;
+            }
+            sOotPspPackedAssetPosition = filePos;
+            sOotPspPackedAssetPositionKnown = true;
+        }
+
+        got = OotPsp_ReadAssetChunk(fd, &sOotPspPrefetchStaging[blockOffset], chunk, path, filePos);
+        if (got <= 0) {
+            sOotPspPackedAssetPositionKnown = false;
+            OotPsp_UnlockAssetLoader();
+            return false;
+        }
+
+        blockOffset += (size_t)got;
+        sOotPspPackedAssetPosition += (size_t)got;
+        sOotPspPackedAssetPositionKnown = true;
+    }
+
+    if (!sOotPspAssetsSuspended && (entry->generation == sOotPspPrefetchGeneration)) {
+        OotPsp_CommitPrefetchedBlock(blockIndex, readSize);
+    }
+    OotPsp_UnlockAssetLoader();
+    return true;
+}
+
+static s32 OotPsp_ProcessPrefetchEntry(const OotPspPrefetchEntry* entry) {
+    size_t startBlock;
+    size_t endBlock;
+    size_t blockIndex;
+
+    if ((entry == NULL) || (entry->size == 0)) {
+        return false;
+    }
+
+    startBlock = entry->fileOffset / OOT_PSP_PACKED_CACHE_BLOCK_SIZE;
+    endBlock = (entry->fileOffset + entry->size - 1) / OOT_PSP_PACKED_CACHE_BLOCK_SIZE;
+    for (blockIndex = startBlock; blockIndex <= endBlock; blockIndex++) {
+        if ((entry->generation != sOotPspPrefetchGeneration) || sOotPspAssetsSuspended ||
+            sOotPspPackedAssetUnavailable) {
+            return false;
+        }
+        if (!OotPsp_PrefetchOneBlock(entry, blockIndex)) {
+            return false;
+        }
+        if (OotPsp_PrefetchShouldYield(entry->generation)) {
+            sceKernelDelayThread(OOT_PSP_AUDIO_READ_BACKOFF_USEC);
+        }
+    }
+    return true;
+}
+
+static int OotPsp_PrefetchThreadMain(SceSize args, void* argp) {
+    (void)args;
+    (void)argp;
+
+    while (true) {
+        OotPspPrefetchEntry entry;
+        u32 gen = sOotPspPrefetchGeneration;
+
+        if (sOotPspPrefetchWorkSema >= 0) {
+            sceKernelWaitSema(sOotPspPrefetchWorkSema, 1, NULL);
+        }
+        if (sOotPspAssetsSuspended || sOotPspPackedAssetUnavailable || (sOotPspPackedCacheData == NULL)) {
+            sceKernelDelayThread(10000);
+            continue;
+        }
+        while (!sOotPspAssetsSuspended && OotPsp_PopNextPrefetchEntry(gen, &entry)) {
+            (void)OotPsp_ProcessPrefetchEntry(&entry);
+            gen = sOotPspPrefetchGeneration;
+        }
+    }
+    return 0;
+}
+
+static void OotPsp_EnsurePrefetchWorker(void) {
+    if (sOotPspPrefetchThreadInitTried) {
+        return;
+    }
+    sOotPspPrefetchThreadInitTried = true;
+    sOotPspPrefetchQueueSema = sceKernelCreateSema("OOT PSP PrefQ", 0, 1, 1, NULL);
+    sOotPspPrefetchWorkSema = sceKernelCreateSema("OOT PSP PrefW", 0, 0, OOT_PSP_PREFETCH_QUEUE_CAPACITY, NULL);
+    if ((sOotPspPrefetchQueueSema < 0) || (sOotPspPrefetchWorkSema < 0)) {
+        return;
+    }
+    sOotPspPrefetchThreadId =
+        sceKernelCreateThread("OOT PSP Prefetch", OotPsp_PrefetchThreadMain, 0x3A, 0x4000, THREAD_ATTR_USER, NULL);
+    if (sOotPspPrefetchThreadId >= 0) {
+        sceKernelStartThread(sOotPspPrefetchThreadId, 0, NULL);
+    }
+}
+
+u32 OotPsp_AssetBeginStreamGeneration(void) {
+    u32 nextGen;
+    size_t i;
+
+    OotPsp_LockPrefetchQueue();
+    nextGen = sOotPspPrefetchGeneration + 1U;
+    if (nextGen == 0) {
+        nextGen = 1U;
+    }
+    sOotPspPrefetchGeneration = nextGen;
+    for (i = 0; i < OOT_PSP_PREFETCH_QUEUE_CAPACITY; i++) {
+        if (sOotPspPrefetchQueue[i].active && (sOotPspPrefetchQueue[i].generation != nextGen)) {
+            sOotPspPrefetchQueue[i].active = false;
+        }
+    }
+    OotPsp_UnlockPrefetchQueue();
+    return nextGen;
+}
+
+u32 OotPsp_AssetGetStreamGeneration(void) {
+    return sOotPspPrefetchGeneration;
+}
+
+s32 OotPsp_AssetPrefetch(uintptr_t vrom, size_t size, u32 generation, u32 deadlineUs) {
+    uintptr_t normalizedVrom;
+    uintptr_t normalizedEnd;
+    const OotPspExternalAsset* asset;
+    size_t offset;
+    size_t fileOffset;
+    size_t remaining;
+    size_t clampedSize;
+    size_t i;
+    size_t freeIdx = OOT_PSP_PREFETCH_QUEUE_CAPACITY;
+    size_t evictIdx = OOT_PSP_PREFETCH_QUEUE_CAPACITY;
+
+    if ((size == 0) || sOotPspAssetsSuspended || sOotPspPackedAssetUnavailable ||
+        (sOotPspPackedCacheData == NULL) || (generation != sOotPspPrefetchGeneration)) {
+        return false;
+    }
+    if ((vrom > (UINTPTR_MAX - size)) ||
+        !OotPsp_NormalizeVromRange(vrom, vrom + size, &normalizedVrom, &normalizedEnd)) {
+        return false;
+    }
+    asset = OotPsp_FindContainingExternalAsset(normalizedVrom, NULL);
+    if ((asset == NULL) || (normalizedEnd > asset->vromEnd) || (normalizedVrom < asset->vromStart)) {
+        return false;
+    }
+    offset = normalizedVrom - asset->vromStart;
+    if (asset->fileOffset > (UINTPTR_MAX - offset)) {
+        return false;
+    }
+    fileOffset = asset->fileOffset + offset;
+    remaining = asset->vromEnd - normalizedVrom;
+    clampedSize = (size < remaining) ? size : remaining;
+    if (clampedSize > OOT_PSP_PREFETCH_MAX_SIZE) {
+        clampedSize = OOT_PSP_PREFETCH_MAX_SIZE;
+    }
+    if (clampedSize == 0) {
+        return false;
+    }
+
+    OotPsp_EnsurePrefetchWorker();
+    OotPsp_LockPrefetchQueue();
+    for (i = 0; i < OOT_PSP_PREFETCH_QUEUE_CAPACITY; i++) {
+        OotPspPrefetchEntry* e = &sOotPspPrefetchQueue[i];
+
+        if (!e->active || (e->generation != sOotPspPrefetchGeneration)) {
+            e->active = false;
+            if (freeIdx == OOT_PSP_PREFETCH_QUEUE_CAPACITY) {
+                freeIdx = i;
+            }
+            continue;
+        }
+        if ((e->fileOffset == fileOffset) && (e->size == clampedSize)) {
+            if (deadlineUs < e->deadlineUs) {
+                e->deadlineUs = deadlineUs;
+            }
+            OotPsp_UnlockPrefetchQueue();
+            return true;
+        }
+        if ((evictIdx == OOT_PSP_PREFETCH_QUEUE_CAPACITY) ||
+            (e->deadlineUs > sOotPspPrefetchQueue[evictIdx].deadlineUs)) {
+            evictIdx = i;
+        }
+    }
+
+    if (freeIdx == OOT_PSP_PREFETCH_QUEUE_CAPACITY) {
+        if ((evictIdx < OOT_PSP_PREFETCH_QUEUE_CAPACITY) &&
+            (deadlineUs < sOotPspPrefetchQueue[evictIdx].deadlineUs)) {
+            freeIdx = evictIdx;
+        } else {
+            OotPsp_UnlockPrefetchQueue();
+            return false;
+        }
+    }
+
+    sOotPspPrefetchQueue[freeIdx].fileOffset = fileOffset;
+    sOotPspPrefetchQueue[freeIdx].size = clampedSize;
+    sOotPspPrefetchQueue[freeIdx].generation = generation;
+    sOotPspPrefetchQueue[freeIdx].deadlineUs = deadlineUs;
+    sOotPspPrefetchQueue[freeIdx].order = sOotPspPrefetchNextOrder++;
+    sOotPspPrefetchQueue[freeIdx].active = true;
+    OotPsp_UnlockPrefetchQueue();
+
+    if (sOotPspPrefetchWorkSema >= 0) {
+        sceKernelSignalSema(sOotPspPrefetchWorkSema, 1);
+    }
+    return true;
 }

@@ -373,18 +373,24 @@ static s32 MmPspAudioSynth_HasResidentSampleBank(void) {
 static s32 MmPspAudioSynth_IsExternalVromRange(uintptr_t address, size_t size) {
     uintptr_t normalized;
     uintptr_t end;
-    size_t i;
+    size_t left = 0;
+    size_t right = gOotPspExternalAssetCount;
 
     if ((size == 0) || (address > (UINTPTR_MAX - size))) {
         return false;
     }
     normalized = OotPsp_NormalizeVrom(address);
     end = normalized + size;
-    for (i = 0; i < gOotPspExternalAssetCount; i++) {
-        const OotPspExternalAsset* asset = &gOotPspExternalAssets[i];
+    while (left < right) {
+        size_t mid = left + ((right - left) / 2);
+        const OotPspExternalAsset* asset = &gOotPspExternalAssets[mid];
 
-        if ((normalized >= asset->vromStart) && (normalized < asset->vromEnd) && (end <= asset->vromEnd)) {
-            return true;
+        if (normalized < asset->vromStart) {
+            right = mid;
+        } else if (normalized >= asset->vromEnd) {
+            left = mid + 1;
+        } else {
+            return end <= asset->vromEnd;
         }
     }
     return false;

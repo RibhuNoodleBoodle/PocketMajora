@@ -1,0 +1,141 @@
+PocketMajora | baseline ledger and acceptance contract
+======================================================
+MEASURED HOST. python3 tools/run_psp_tests.py in this checkout ran 42 scripts.
+41 passed. test_psp_me_cache_layout.py could not start psp-nm. Re-running with
+PSP_NM=nm identified six isolated cache owners in the existing base ELF, then
+stopped at missing psp-objdump. The disassembly check is pending. Host pacing
+harness exercises 20/40/60 via a virtual clock. These timings are test inputs.
+psp-config and psp-gcc unavailable on inspected PATH; fresh PSP build pending.
+
+OBSERVED PREVIOUS EMULATOR LOG. Snap ppsspp-emulator rev 32, package 1.20.4
+is installed. User's existing MM_PSP/mm-psp-diag.log under
+~/snap/ppsspp-emulator/common/.config/ppsspp/PSP/GAME contains 64 lines,
+5 scene entries (8,111,97,108,111), 57 object-loaded entries. Startup reports
+18,379,520 free bytes, largest block 18,121,472. No event timestamps. The
+header says "Hardware Diagnostic Log" even here. Installed MM_PSP/EBOOT.PBP
+and build/psp-port/n64-us/EBOOT.PBP both SHA-256
+9a801d4c83854a217cda7ae0a59de113819318a9a7debb72844f65723b60ff35.
+Log does not record binary hash; source revision and historical settings
+cannot be reconstructed from this alone. Current emulator global settings
+include PSPModel=1, OpenGL, 1x, FrameSkip=0, AutoFrameSkip=False,
+IOTimingMethod=0. Query UI for effective per-game overrides. Save images exist;
+no documented repeatable input or native comparison capture was established.
+
+PSP-3000 hardware unavailable in USB/mount inventory. No fresh AV or FPS run in
+this analysis. Real RAM high water, renderer time, unique FPS, frame tails,
+buffer fill, audible defects, I/O stalls, missed asset deadlines, crash rate
+and native effect parity are all UNMEASURED. Do not infer a passing result.
+
+Repeatable runs
+---------------
+1. Preserve an input save by copying it into a separate install/profile.
+Record its checksum, scene, spawn, day/time, form, inventory and route/input
+script or time-stamped controller notes. Preserve the user's saves, settings
+and packs. Record git HEAD, dirty diff digest, binary/pack digests, SDK and ME
+versions, build flags, emulator version/backend or PSP model/firmware, requested
+and measured clocks, DVE/EDRAM mode, storage type, display/VSync and audio
+mode. Run ./psp.sh VERSION=n64-us then python3 tools/run_psp_tests.py.
+Start with default ME and software SRC. Produce 20 and 40 captures with the
+same save/input; 60 is a regression check. Check instrumented vs ordinary build.
+2. Measure first asset conversion as a separate boot-only trial in the isolated
+install. For cold gameplay reopen process with existing pack and empty runtime
+caches. Record whether OS/device caches could be flushed. Warm means repeat
+the route within one session. Use at least three cold and three warm trials
+for compared configurations. Randomize or alternate A/B order. Split title,
+load, menus, pause, gameplay, transition and suspend into labelled intervals.
+3. Route: title -> identical save -> crowded South Clock Town; hold camera on
+a landmark, walk the same path past multiple NPCs, turn rapidly both ways,
+cross a door and return; move into an adjoining area; trigger a repeatable
+spawn cluster, a translucent particle/fire effect and overlapping music/SFX;
+pause, resume, transition and repeat. Record input tick numbers, positions,
+scene/actor IDs, item/effect and clip timestamps in route.txt from first run.
+If progression requires another save for a boss/item/time reset, list and
+checksum it separately. Include those segments in closure tests. Run sustained
+multi-area play with scene cycling for at least 20 minutes. Capture HOME,
+sleep/wake, save/reload and time-dependent quest/puzzle events separately.
+4. PPSSPP: isolated Slim profile, 100% speed, frame skip/auto/fast-forward off,
+1x resolution, ordinary renderer effects enabled, fixed backend. Record CPU
+setting, host refresh, I/O timing method, ME homebrew support and host audio
+buffer/resampler. Compare a simulated slow-storage mode if exposed. Keep host
+speed/latency settings fixed. Use pause/debugger to capture GE frame dumps for
+suspect draws and native-resolution screenshots at recorded ticks. Capture
+short synced audio/video clips around each glitch plus clean reference before
+and after. Use profiler/dump runs separately from timed runs. On PSP capture
+trace + line audio or external A/V where available; mark camera phase, output
+mode and capture frame rate. Keep lawful local reference captures private.
+
+Instrumentation contract
+------------------------
+One monotonic time base extended across 32-bit wrap; separate wake epochs. Per
+thread fixed-size buffers, sequence numbers, overflow and total counts, no
+heap/file logging on output/mixer/GE submission. Flush stopped windows or use
+bounded low-priority draining whose cost is measured. Compact record layout:
+version, timestamp_us, thread, event, tick_id, pass_id, scene_epoch, request
+or actor_instance_id, values. Bind generation to reused framebuffer addresses
+and asset slots. Correlate worker completion via IDs. Reuse OOTDEBUG metrics
+only after wiring and verifying MM boundaries. PSP_AUDIO_DIAGNOSTICS=1,
+PSP_GFX_DIAGNOSTICS=1, PSP_WAKE_DIAGNOSTICS=1 are separate diagnostic builds;
+compare CPU cost, trace loss and wall time against release.
+
+Capture simulation, actor constructor/free, update, skeletal animation,
+collision/AI, DL build/interpret/submit, GE fence and vblank wait; bytes read,
+seek, lock, parse/transform/decode/upload, hit/miss, priority, queue age/depth,
+idle-with-demand, eviction and cancel; audio producer/ME publish/output return,
+PCM occupancy and error/underrun/late counters; arena/list peak and available
+largest block. Tag assets requested, read, CPU-ready, animation/material-ready,
+GE-safe, audio-ready and first required tick. Unavailable dependencies still
+count as late when they suppress first use. Use IDs for expected visible
+actors and native scripted reveals. Hash explicit stable logical fields at
+fixed input ticks (position/health/clock/quest flags/room/cutscene, RNG if
+controlled); exclude pointers, padding and rendering state. Check button edge
+to first game response latency in ticks plus display latency in wall time.
+
+Off-device compute mean/p50/p95/p99/max for work and present deltas per route
+segment/run. Use start-to-ready critical path, exclude pacing sleep and display
+idle, report overlapped game/ME/GE spans separately; never add overlapping
+thread timers. Amortize game tick work across actual passes and also show slow
+individual passes. Report count/fraction over 25 ms, clusters and intervals
+over 50 ms, slowest 10 s window, actual game ticks/s, rendered passes/s,
+unique fronts/s and repeated fronts. A framebuffer queued for next refresh
+is distinct from a verified displayed frame. Label lower bounds if scanout
+cannot be observed for every vblank. Measure GPU wait as a wait proxy unless
+true execution timing is available. Correlate p99 stalls with trace events.
+Report read throughput and service latency separately. For each request compute
+ready slack = first required time minus ready time. Summarize queued/driver
+audio latency, audio-clock drift and PCM discontinuities, listen to route clips.
+
+Acceptance on the PSP-3000
+--------------------------
+* Normal game divisor 3 at nominal 60 VI/s yields ~20 updates/s. Goal 40 unique
+  renders/s and 40 unique fronts/s in sustained moving gameplay, average work
+  <=25.0 ms; use measured refresh*2/3 for the nominal 40 scanout tolerance.
+  Report each trial and full steady-gameplay window, worst 10 s and p95/p99/max.
+  Propose no regression in tails versus paired trials beyond measured variability
+  and zero identifiable actor-I/O-only over-budget passes. Show counts even when
+  a goal is missed. With VSync expect roughly 16.7/33.3 ms holds; also report
+  excess three-or-more-refresh holds. VSync-off tearing is a separate tradeoff.
+* Audio: zero unintended silence, pop/click/dropout and mixer/output underruns
+  in all cold/warm routes and >=20 min soak. Report initial priming and explicit
+  pause/wake recovery separately. Check pitch, stereo, tempo, sustained notes,
+  output errors, latency and minimum playable occupancy. Intentional rests in
+  the score need clip corroboration. Zero counters alone cannot prove quality.
+* Streaming: zero deadline misses that starve audio or visible assets; aim for
+  eligible critical queue service within 25 ms or its earlier audio deadline.
+  Report p95/p99/max service, media latency and hidden latency separately.
+  Zero unexplained pop-ins on camera turns/spawns/doors/effects; trace expected
+  first use and compare original reveal. Document timeouts, retries and dropped
+  trace records. Missing trace intervals cannot support a zero-event claim.
+* Logic: same expected quest, timer, collision, cutscene, animation and save
+  results on a deterministic route at 20/40/60. Input responsiveness and A/V
+  sync must hold. Visual rows require clip/still evidence, plus no lost effect.
+* Memory/stability: no crash, corrupted bytes/save, missing mandatory assets,
+  unbounded waits or increasing retained allocations across identical cycles.
+  Compare RAM, EDRAM, largest usable block, peaks at transition overlap and after
+  teardown; preserve measured worst-case baseline headroom. Report failures.
+* Archive results per step under an external evidence root, e.g.
+  ~/PocketMajora-evidence/step-01/{before,after}/<device>/<run>/ with
+  manifest.txt, route.txt, events, metrics.csv, state hashes and AV indices.
+  Store private inputs locally; include paths/checksums and compact results
+  in HANDOFF.txt. No target machine means hardware-pending, never accepted
+  as a device performance fix. If infeasible identify measured constraints,
+  remaining milliseconds and choices for the user; keep 40 as requested.

@@ -80,9 +80,9 @@ fixes. MM's two-cycle material cache, animated water, per-tile palettes, HUD
 projection, and native motion blur are retained. Player silhouette shadows use
 the GU stamp path; MM's fractional shadow rows are quantized to pixel rows.
 
-HOME > Video Settings offers 20 FPS (default) and 60 FPS presentation, VSync,
+HOME > Video Settings offers 20 FPS (default), 40 FPS, and 60 FPS presentation, VSync,
 LCD/TV output, and aspect ratio. Save `video.ini` to persist settings. Game logic
-keeps MM's original update interval; 60 FPS replays immutable display lists with
+keeps MM's original update interval; 40 FPS and 60 FPS replay immutable display lists with
 matrix interpolation. Frame history resets on state/scene/room/camera changes,
 HOME, video mode changes, and sleep. Presentation waits run on a video thread.
 The shortened foreground camera plane preserves the original fog curve and

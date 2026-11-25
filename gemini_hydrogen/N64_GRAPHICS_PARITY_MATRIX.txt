@@ -1,0 +1,93 @@
+N64 visual parity | evidence register and capture assignments
+============================================================
+All rows currently lack a matched PSP-3000 / original-MM capture. "Path" means
+present in code, "approx" a known translation, "open" a capability or match
+requiring evidence. No particular in-game effect was verified missing or broken
+in this review. Move a row to broken/missing only with a reproducer; promote to
+matched only with the comparison and device identified.
+
+Test names below expand to tools/tests/test_psp_<name>.py, source names under
+src/port/psp/backend/gfx/ unless specified. Each row gives status, location,
+capture/action, expected invariant and a targeted repair if the comparison fails.
+
+01 | Fog | path/approx | gfx_fast3d.c gfx_set_fog_projection,
+gfx_scegu_draw_fog_triangles; zero_fog, camera_near. Walk from near to far
+against terrain in fog and pan into a cutscene. Compare monotonic gradient,
+start/end and obscured silhouettes; inspect projection and alpha per vertex.
+
+02 | Depth, decals, near clipping | path | gfx_scegu_set_depth_mask/bias,
+gfx_sp_cull_display_list; decal_depth, frustum, camera_near. Orbit sloping
+ground, walk through an edge, first person and cutscene. Check z fighting,
+road holes and decal persistence; correct only divergent depth state or bound.
+
+03 | Alpha compare / coverage | approx | gfx_scegu.c shader texture-edge
+branch; sampler_state, texture_mirror. Inspect leaves/fence over a bright sky
+at several distances. Compare silhouette, halos and written depth. Trace
+threshold, texture filtering and per-pass masks before changing coverage.
+
+04 | Dither and noise | open | gfx_fast3d.c sets SHADER_OPT_NOISE; sample
+GU dither matrix code in gfx_scegu.c:2442 is compiled out. Sweep dark gradients
+and fades over consecutive ticks in 5650 and 8888. Capture temporal pattern,
+quantization and alpha compare separately. A disabled color-dither block alone
+cannot establish the fate of RDP alpha dither. Recreate only confirmed usage.
+
+05 | Translucency, two-cycle combine | path/approx | gfx_dp_set_combine,
+gfx_scegu.c and z_room.c Room_DrawCullable; combiner, mm_passes, layer_clipping.
+Put glass/fire or NPC silhouette in front of layered scenery. Compare blend
+order, opacity and coincident layer edges. Fix specific mux mapping, flush
+boundary or sort order; retain separate OPA and XLU semantics.
+
+06 | Addressing, UV, stride, filter and CLUT | path | gfx_texture_import_dimensions,
+import_texture_ci4/ci8, psp_texture_manager.c texman_bind_tex; texture_coords,
+texture_stride, texture_mirror, clock_town_walls. Follow scrolling town walls,
+mirrored repeat and two palette variants from a reused address; compare seams,
+scale, orientation, bleeding and color. Key by format/tile/palette/generation.
+
+07 | Animated water/material transitions | path | gfx_fast3d.c material
+combine and texture cache, gfx_scegu.c sampler state; material_transitions,
+sampler_state. Keep geometry fixed and sample multiple simulation ticks;
+verify both scroll phases and binding after a shadow/other material. Preserve
+dynamic inputs on intermediate renders; invalidate only affected state.
+
+08 | Fire, particles, trails, arrow glow | approx | gfx_fast3d.c fire/noise
+combination and gfx_sp_triangles; arrow_glow, layer_clipping, get_item_materials.
+Record effect start to extinction over light/dark backgrounds. Compare
+subtractive core, additive rim, layer order, count, lifetime and movement.
+Inspect material cache keys and pass order; keep particle event cadence.
+
+09 | Lighting, animation and player shadows | path/approx | gfx_fast3d.c,
+src/port/psp/mm_psp_matrix.c, backend/oot_psp_frame_interpolation.c; gpu_lighting,
+limb_matrix, gpu_shadows, shadow_dispatch. Orbit a moving character and nearby
+shadow receiver; compare limb attachment, silhouette and contact. Row-quantized
+shadow stamping is documented. Validate pose at full tick before interpolation.
+
+10 | Motion blur / framebuffer feedback | path/approx | src/code/z_play.c
+Play_DrawMotionBlur and src/port/psp/mm_psp_gfx_scegu.c
+MmPspGfx_CaptureMotionBlurFrame; motion_blur. Trigger a transformation or
+other confirmed blur, track a bright edge for equal wall-time at 20/40/60.
+Check decay, pre-HUD capture, reset across cuts and memory-allocation failure.
+Fix feedback cadence or buffer ownership only after identifying divergence.
+
+11 | Lens, monochrome, cutscene wipes | open/path | src/code/z_actor.c
+Actor_DrawAll lens flags, src/code/z_play.c Play_UpdateTransition,
+gfx_scegu_apply_vismono. Capture lens on/off, entrance fade and scripted cut
+at known ticks. Check masked actors, depth occlusion, color and transition
+duration. Trace effect dispatch and reset; add a focused fixture for failure.
+
+12 | UI, scissor, backgrounds and aspect | path | gfx_dp_set_scissor,
+gfx_dp_texture_rectangle, gfx_s2dex_bg_upload_rgba16_texture; hud_projection,
+rectangle_scissor. Compare title, pause, messages and a room image against the
+4:3 reference; in 16:9 compare central framing, anchors and uncovered edges.
+Check post-HOME restoration. Correct projection/clip selection for that layer.
+
+Evidence procedure: use a lawful local US N64 run or original-device footage
+with the same save, tick, camera, FOV, day and effect phase. Label emulator
+reference/core and uncertainty. Preserve source and candidate native-size
+stills plus a short motion sequence; align the central 4:3 viewport and record
+expected widescreen/color-format differences. For each row archive clip/frame IDs,
+pixel regions, state/GE dump, first divergent draw, render-pass timing and a
+before/after statement in parity.csv. Use numeric region diffs for stable
+areas and per-event order/timing for stochastic or dithered regions. Match
+simulation endpoints and inspect intermediate passes separately. If exact RDP
+behavior exceeds GU capabilities, document attempted representation, extra
+passes/RAM/ms, visible loss and pending user decision on a material compromise.

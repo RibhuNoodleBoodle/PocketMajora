@@ -188,7 +188,7 @@ static void OotPspHomeMenu_AdjustVideoRow(int direction) {
     } else if (sVideoSelectedIndex == OOT_PSP_VIDEO_MENU_ROW_ASPECT) {
         OotPspVideo_CycleAspect(direction);
     } else if (sVideoSelectedIndex == OOT_PSP_VIDEO_MENU_ROW_FPS) {
-        OotPspVideo_SetFrameRate(OotPspVideo_GetFrameRate() == 20 ? 60 : 20);
+        OotPspVideo_CycleFrameRate(direction);
     } else if (sVideoSelectedIndex == OOT_PSP_VIDEO_MENU_ROW_VSYNC) {
         OotPspVideo_SetVSyncEnabled(!OotPspVideo_IsVSyncEnabled());
     }

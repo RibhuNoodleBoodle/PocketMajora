@@ -35,9 +35,10 @@ typedef int SceUID; typedef size_t SceSize; typedef ssize_t SceSSize;
 #define PSP_O_WRONLY O_WRONLY
 #define PSP_O_CREAT O_CREAT
 #define PSP_O_TRUNC O_TRUNC
-#define sceIoClose close
 static size_t ioLimit=4093;
-static int failOpen,failWrite;
+static int failOpen,failWrite,failClose,failRemove,failRenameNum,renameCount;
+static ssize_t writeBudget=-1;
+static int zeroWriteOnce;
 static SceUID sceIoOpen(const char* path,int flags,int mode) {
     if (failOpen) return -1;
     return open(path,flags,mode);
@@ -47,7 +48,34 @@ static SceSSize sceIoRead(SceUID fd,void* data,SceSize size) {
 }
 static SceSSize sceIoWrite(SceUID fd,const void* data,SceSize size) {
     if (failWrite) return -1;
-    return write(fd,data,size>ioLimit ? ioLimit : size);
+    if (zeroWriteOnce) { zeroWriteOnce=0; return 0; }
+    SceSize chunk = size>ioLimit ? ioLimit : size;
+    if (writeBudget>=0) {
+        if (writeBudget==0) return -1;
+        if ((ssize_t)chunk > writeBudget) chunk = (SceSize)writeBudget;
+        writeBudget -= (ssize_t)chunk;
+    }
+    return write(fd,data,chunk);
+}
+static int sceIoClose(SceUID fd) {
+    int rc = close(fd);
+    if (failClose) { failClose=0; return -1; }
+    return rc;
+}
+static int sceIoRemove(const char* path) {
+    if (failRemove) return -1;
+    return remove(path);
+}
+static int sceIoRename(const char* oldname,const char* newname) {
+    renameCount++;
+    if (failRenameNum && renameCount == failRenameNum) return -1;
+    /* Match PSP FAT semantics: sceIoRename fails if destination exists. */
+    if (access(newname, F_OK) == 0) return -1;
+    return rename(oldname,newname);
+}
+static int sceIoSync(const char* device, unsigned int unk) {
+    (void)device; (void)unk;
+    return 0;
 }
 static const char* OotPsp_ResolveRootPath(const char* path,char* buffer,size_t size) {
     (void)buffer;(void)size;return path;
@@ -74,7 +102,9 @@ typedef FileSelectState GameState;
 enum { CM_NAME_ENTRY_WAIT_FOR_FLASH_SAVE,CM_NAME_ENTRY_TO_MAIN,CM_OPTIONS_WAIT_FOR_FLASH_SAVE,CM_OPTIONS_TO_MAIN };
 '''
 code += function((ROOT / 'src/port/psp/backend/libultra_psp.c').read_text(), 'osGetTime')
-for name in ('MmPsp_GetSavePath','MmPsp_LoadFlash','MmPsp_FlushFlash','SysFlashrom_IsInit',
+for name in ('MmPsp_GetSavePath','MmPsp_FormatSaveSidecarPath','MmPsp_SavePathExists',
+             'MmPsp_SyncSaveDevice','MmPsp_ReadExactSaveFile','MmPsp_WriteExactSaveFile',
+             'MmPsp_LoadFlash','MmPsp_CommitFlash','SysFlashrom_IsInit',
              'SysFlashrom_InitFlash','SysFlashrom_Read','SysFlashrom_WriteAsync','SysFlashrom_IsBusy',
              'SysFlashrom_AwaitResult','SysFlashrom_WriteSync'):
     code += function(game, name)
@@ -134,7 +164,68 @@ int main(int argc,char** argv) {
     assert(SysFlashrom_AwaitResult()==-1 && SysFlashrom_IsBusy()==0);failWrite=0;
     SysFlashrom_WriteSync(data,0,1);assert(SysFlashrom_IsBusy()==0);
     assert(SysFlashrom_Read(other,0,1)==0 && memcmp(other,data,FLASH_BLOCK_SIZE)==0);
-    puts("Flash saves: create/options exit Please Wait after two seconds, persistence, owl backups, sync and failure completion passed");
+    // Atomic commit & recovery: failed partial writes, close failures, rename/remove
+    // failures and mid-commit crashes preserve prior valid generation on disk & RAM.
+    u8 newData[SAVE_BUFFER_SIZE],baselineData[FLASH_BLOCK_SIZE];
+    memcpy(baselineData,data,FLASH_BLOCK_SIZE);
+    memset(newData,0xA5,sizeof(newData));
+    writeBudget=65536;
+    SysFlashrom_WriteAsync(newData,0,1);
+    assert(SysFlashrom_AwaitResult()==-1); writeBudget=-1;
+    assert(SysFlashrom_Read(other,0,1)==0 && memcmp(other,baselineData,FLASH_BLOCK_SIZE)==0);
+    memset(sMmPspFlash,0,sizeof(sMmPspFlash)); MmPsp_LoadFlash();
+    assert(SysFlashrom_Read(other,0,1)==0 && memcmp(other,baselineData,FLASH_BLOCK_SIZE)==0);
+
+    zeroWriteOnce=1;
+    SysFlashrom_WriteAsync(newData,0,1);
+    assert(SysFlashrom_AwaitResult()==-1);
+    memset(sMmPspFlash,0,sizeof(sMmPspFlash)); MmPsp_LoadFlash();
+    assert(SysFlashrom_Read(other,0,1)==0 && memcmp(other,baselineData,FLASH_BLOCK_SIZE)==0);
+
+    failClose=1;
+    SysFlashrom_WriteAsync(newData,0,1);
+    assert(SysFlashrom_AwaitResult()==-1);
+    memset(sMmPspFlash,0,sizeof(sMmPspFlash)); MmPsp_LoadFlash();
+    assert(SysFlashrom_Read(other,0,1)==0 && memcmp(other,baselineData,FLASH_BLOCK_SIZE)==0);
+
+    failRemove=1;
+    SysFlashrom_WriteAsync(newData,0,1);
+    assert(SysFlashrom_AwaitResult()==-1); failRemove=0;
+    memset(sMmPspFlash,0,sizeof(sMmPspFlash)); MmPsp_LoadFlash();
+    assert(SysFlashrom_Read(other,0,1)==0 && memcmp(other,baselineData,FLASH_BLOCK_SIZE)==0);
+
+    renameCount=0; failRenameNum=1;
+    SysFlashrom_WriteAsync(newData,0,1);
+    assert(SysFlashrom_AwaitResult()==-1); failRenameNum=0;
+    memset(sMmPspFlash,0,sizeof(sMmPspFlash)); MmPsp_LoadFlash();
+    assert(SysFlashrom_Read(other,0,1)==0 && memcmp(other,baselineData,FLASH_BLOCK_SIZE)==0);
+
+    renameCount=0; failRenameNum=2;
+    SysFlashrom_WriteAsync(newData,0,1);
+    assert(SysFlashrom_AwaitResult()==-1); failRenameNum=0;
+    memset(sMmPspFlash,0,sizeof(sMmPspFlash)); MmPsp_LoadFlash();
+    assert(SysFlashrom_Read(other,0,1)==0 && memcmp(other,baselineData,FLASH_BLOCK_SIZE)==0);
+
+    // Ensure steady-state backup exists (generation N live + N-1 .bak), then simulate
+    // interrupted/corrupted live file and deleted live file recovering cleanly from .bak.
+    SysFlashrom_WriteSync(baselineData,0,1);
+    FILE* f = fopen(MM_PSP_SAVE_PATH, "wb");
+    assert(f != NULL);
+    fwrite(newData, 1, 1024, f);
+    fclose(f);
+    memset(sMmPspFlash,0,sizeof(sMmPspFlash)); MmPsp_LoadFlash();
+    assert(SysFlashrom_Read(other,0,1)==0 && memcmp(other,baselineData,FLASH_BLOCK_SIZE)==0);
+
+    assert(remove(MM_PSP_SAVE_PATH) == 0);
+    memset(sMmPspFlash,0,sizeof(sMmPspFlash)); MmPsp_LoadFlash();
+    assert(SysFlashrom_Read(other,0,1)==0 && memcmp(other,baselineData,FLASH_BLOCK_SIZE)==0);
+
+    // Legacy raw 128 KiB save without .bak sidecar loads cleanly.
+    remove(MM_PSP_SAVE_PATH ".bak");
+    memset(sMmPspFlash,0,sizeof(sMmPspFlash)); MmPsp_LoadFlash();
+    assert(SysFlashrom_Read(other,0,1)==0 && memcmp(other,baselineData,FLASH_BLOCK_SIZE)==0);
+
+    puts("Flash saves: create/options exit Please Wait after two seconds, persistence, owl backups, atomic commit, sync and failure recovery passed");
 }
 '''
 with tempfile.TemporaryDirectory(prefix='mm-flash-save-') as directory:

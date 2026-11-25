@@ -187,6 +187,13 @@ void Matrix_Mult(MtxF* mf, MatrixMode mode) {
  */
 void Matrix_Translate(f32 x, f32 y, f32 z, MatrixMode mode) {
     MtxF* cmf = sCurrentMatrix;
+#if PLATFORM_PSP
+    if (mode == MTXMODE_APPLY) {
+        OotPspVfpu_MtxFTranslate(cmf, x, y, z);
+    } else {
+        OotPspVfpu_MtxFSetTranslate(cmf, x, y, z);
+    }
+#else
     f32 tempX;
     f32 tempY;
 
@@ -206,6 +213,7 @@ void Matrix_Translate(f32 x, f32 y, f32 z, MatrixMode mode) {
     } else {
         SkinMatrix_SetTranslate(cmf, x, y, z);
     }
+#endif
 }
 
 /**
@@ -234,6 +242,13 @@ void Matrix_Translate(f32 x, f32 y, f32 z, MatrixMode mode) {
 void Matrix_Scale(f32 x, f32 y, f32 z, MatrixMode mode) {
     MtxF* cmf = sCurrentMatrix;
 
+#if PLATFORM_PSP
+    if (mode == MTXMODE_APPLY) {
+        OotPspVfpu_MtxFScale(cmf, x, y, z);
+    } else {
+        OotPspVfpu_MtxFSetScale(cmf, x, y, z);
+    }
+#else
     if (mode == MTXMODE_APPLY) {
         cmf->xx *= x;
         cmf->yx *= x;
@@ -250,6 +265,7 @@ void Matrix_Scale(f32 x, f32 y, f32 z, MatrixMode mode) {
     } else {
         SkinMatrix_SetScale(cmf, x, y, z);
     }
+#endif
 }
 
 /**
@@ -281,8 +297,10 @@ void Matrix_RotateXS(s16 x, MatrixMode mode) {
     MtxF* cmf;
     f32 sin;
     f32 cos;
+#if !PLATFORM_PSP
     f32 tempY;
     f32 tempZ;
+#endif
 
     if (mode == MTXMODE_APPLY) {
         if (x != 0) {
@@ -291,6 +309,9 @@ void Matrix_RotateXS(s16 x, MatrixMode mode) {
             sin = Math_SinS(x);
             cos = Math_CosS(x);
 
+#if PLATFORM_PSP
+            OotPspVfpu_MtxFRotateX(cmf, sin, cos);
+#else
             tempY = cmf->xy;
             tempZ = cmf->xz;
             cmf->xy = tempY * cos + tempZ * sin;
@@ -310,6 +331,7 @@ void Matrix_RotateXS(s16 x, MatrixMode mode) {
             tempZ = cmf->wz;
             cmf->wy = tempY * cos + tempZ * sin;
             cmf->wz = tempZ * cos - tempY * sin;
+#endif
         }
     } else {
         cmf = sCurrentMatrix;
@@ -371,8 +393,10 @@ void Matrix_RotateXF(f32 x, MatrixMode mode) {
     MtxF* cmf;
     f32 sin;
     f32 cos;
+#if !PLATFORM_PSP
     f32 tempY;
     f32 tempZ;
+#endif
     f32 zero = 0.0;
     f32 one = 1.0;
 
@@ -380,6 +404,10 @@ void Matrix_RotateXF(f32 x, MatrixMode mode) {
         if (x != 0) {
             cmf = sCurrentMatrix;
 
+#if PLATFORM_PSP
+            OotPspVfpu_SinCos(x, &sin, &cos);
+            OotPspVfpu_MtxFRotateX(cmf, sin, cos);
+#else
             sin = sinf(x);
             cos = cosf(x);
 
@@ -402,13 +430,18 @@ void Matrix_RotateXF(f32 x, MatrixMode mode) {
             tempZ = cmf->wz;
             cmf->wy = tempY * cos + tempZ * sin;
             cmf->wz = tempZ * cos - tempY * sin;
+#endif
         }
     } else {
         cmf = sCurrentMatrix;
 
         if (x != 0) {
+#if PLATFORM_PSP
+            OotPspVfpu_SinCos(x, &sin, &cos);
+#else
             sin = sinf(x);
             cos = cosf(x);
+#endif
         } else {
             sin = zero;
             cos = one;
@@ -445,8 +478,10 @@ void Matrix_RotateXFApply(f32 x) {
     MtxF* cmf;
     f32 sin;
     f32 cos;
+#if !PLATFORM_PSP
     f32 tempY;
     f32 tempZ;
+#endif
     s32 pad;
 
     if (x != 0.0f) {
@@ -455,6 +490,9 @@ void Matrix_RotateXFApply(f32 x) {
         sin = sins(RAD_TO_BINANG(x)) * (1.0f / SHRT_MAX);
         cos = coss(RAD_TO_BINANG(x)) * (1.0f / SHRT_MAX);
 
+#if PLATFORM_PSP
+        OotPspVfpu_MtxFRotateX(cmf, sin, cos);
+#else
         tempY = cmf->xy;
         tempZ = cmf->xz;
         cmf->xy = (tempY * cos) + (tempZ * sin);
@@ -474,6 +512,7 @@ void Matrix_RotateXFApply(f32 x) {
         tempZ = cmf->wz;
         cmf->wy = (tempY * cos) + (tempZ * sin);
         cmf->wz = (tempZ * cos) - (tempY * sin);
+#endif
     }
 }
 
@@ -505,8 +544,12 @@ void Matrix_RotateXFNew(f32 x) {
     cmf->ww = 1.0f;
 
     if (x != 0.0f) {
+#if PLATFORM_PSP
+        OotPspVfpu_SinCos(x, &sin, &cos);
+#else
         sin = sinf(x);
         cos = cosf(x);
+#endif
 
         cmf->yy = cos;
         cmf->zz = cos;
@@ -549,8 +592,10 @@ void Matrix_RotateYS(s16 y, MatrixMode mode) {
     MtxF* cmf;
     f32 sin;
     f32 cos;
+#if !PLATFORM_PSP
     f32 tempX;
     f32 tempZ;
+#endif
 
     if (mode == MTXMODE_APPLY) {
         if (y != 0) {
@@ -559,6 +604,9 @@ void Matrix_RotateYS(s16 y, MatrixMode mode) {
             sin = Math_SinS(y);
             cos = Math_CosS(y);
 
+#if PLATFORM_PSP
+            OotPspVfpu_MtxFRotateY(cmf, sin, cos);
+#else
             tempX = cmf->xx;
             tempZ = cmf->xz;
             cmf->xx = tempX * cos - tempZ * sin;
@@ -578,6 +626,7 @@ void Matrix_RotateYS(s16 y, MatrixMode mode) {
             tempZ = cmf->wz;
             cmf->wx = tempX * cos - tempZ * sin;
             cmf->wz = tempX * sin + tempZ * cos;
+#endif
         }
     } else {
         cmf = sCurrentMatrix;
@@ -638,8 +687,10 @@ void Matrix_RotateYF(f32 y, MatrixMode mode) {
     MtxF* cmf;
     f32 sin;
     f32 cos;
+#if !PLATFORM_PSP
     f32 tempX;
     f32 tempZ;
+#endif
     f32 zero = 0.0;
     f32 one = 1.0;
 
@@ -647,6 +698,10 @@ void Matrix_RotateYF(f32 y, MatrixMode mode) {
         if (y != 0.0f) {
             cmf = sCurrentMatrix;
 
+#if PLATFORM_PSP
+            OotPspVfpu_SinCos(y, &sin, &cos);
+            OotPspVfpu_MtxFRotateY(cmf, sin, cos);
+#else
             sin = sinf(y);
             cos = cosf(y);
 
@@ -669,13 +724,18 @@ void Matrix_RotateYF(f32 y, MatrixMode mode) {
             tempZ = cmf->wz;
             cmf->wx = tempX * cos - tempZ * sin;
             cmf->wz = tempX * sin + tempZ * cos;
+#endif
         }
     } else {
         cmf = sCurrentMatrix;
 
         if (y != 0.0f) {
+#if PLATFORM_PSP
+            OotPspVfpu_SinCos(y, &sin, &cos);
+#else
             sin = sinf(y);
             cos = cosf(y);
+#endif
         } else {
             cos = one;
             sin = zero;
@@ -729,8 +789,10 @@ void Matrix_RotateZS(s16 z, MatrixMode mode) {
     MtxF* cmf;
     f32 sin;
     f32 cos;
+#if !PLATFORM_PSP
     f32 tempX;
     f32 tempY;
+#endif
     f32 zero = 0.0;
     f32 one = 1.0;
 
@@ -741,6 +803,9 @@ void Matrix_RotateZS(s16 z, MatrixMode mode) {
             sin = Math_SinS(z);
             cos = Math_CosS(z);
 
+#if PLATFORM_PSP
+            OotPspVfpu_MtxFRotateZ(cmf, sin, cos);
+#else
             tempX = cmf->xx;
             tempY = cmf->xy;
             cmf->xx = tempX * cos + tempY * sin;
@@ -760,6 +825,7 @@ void Matrix_RotateZS(s16 z, MatrixMode mode) {
             tempY = cmf->wy;
             cmf->wx = tempX * cos + tempY * sin;
             cmf->wy = tempY * cos - tempX * sin;
+#endif
         }
     } else {
         cmf = sCurrentMatrix;
@@ -820,13 +886,19 @@ void Matrix_RotateZF(f32 z, MatrixMode mode) {
     MtxF* cmf;
     f32 sin;
     f32 cos;
+#if !PLATFORM_PSP
     f32 tempX;
     f32 tempY;
+#endif
 
     if (mode == MTXMODE_APPLY) {
         if (z != 0) {
             cmf = sCurrentMatrix;
 
+#if PLATFORM_PSP
+            OotPspVfpu_SinCos(z, &sin, &cos);
+            OotPspVfpu_MtxFRotateZ(cmf, sin, cos);
+#else
             sin = sinf(z);
             cos = cosf(z);
 
@@ -849,13 +921,18 @@ void Matrix_RotateZF(f32 z, MatrixMode mode) {
             tempY = cmf->wy;
             cmf->wx = tempX * cos + tempY * sin;
             cmf->wy = tempY * cos - tempX * sin;
+#endif
         }
     } else {
         cmf = sCurrentMatrix;
 
         if (z != 0) {
+#if PLATFORM_PSP
+            OotPspVfpu_SinCos(z, &sin, &cos);
+#else
             sin = sinf(z);
             cos = cosf(z);
+#endif
         } else {
             sin = 0.0f;
             cos = 1.0f;
@@ -899,12 +976,25 @@ void Matrix_RotateZF(f32 z, MatrixMode mode) {
  */
 void Matrix_RotateZYX(s16 x, s16 y, s16 z, MatrixMode mode) {
     MtxF* cmf = sCurrentMatrix;
+#if !PLATFORM_PSP
     f32 temp1;
     f32 temp2;
     f32 sin;
     f32 cos;
+#endif
 
     if (mode == MTXMODE_APPLY) {
+#if PLATFORM_PSP
+        if (z != 0) {
+            OotPspVfpu_MtxFRotateZ(cmf, Math_SinS(z), Math_CosS(z));
+        }
+        if (y != 0) {
+            OotPspVfpu_MtxFRotateY(cmf, Math_SinS(y), Math_CosS(y));
+        }
+        if (x != 0) {
+            OotPspVfpu_MtxFRotateX(cmf, Math_SinS(x), Math_CosS(x));
+        }
+#else
         if (z != 0) { // Added in MM, OoT always follows the nonzero path
             sin = Math_SinS(z);
             cos = Math_CosS(z);
@@ -979,6 +1069,7 @@ void Matrix_RotateZYX(s16 x, s16 y, s16 z, MatrixMode mode) {
             cmf->wy = temp1 * cos + temp2 * sin;
             cmf->wz = temp2 * cos - temp1 * sin;
         }
+#endif
     } else {
         SkinMatrix_SetRotateRPY(cmf, x, y, z);
     }
@@ -1175,9 +1266,8 @@ void Matrix_SetTranslateRotateYXZ(f32 x, f32 y, f32 z, Vec3s* rot) {
  */
 Mtx* Matrix_MtxFToMtx(MtxF* src, Mtx* dest) {
 #if PLATFORM_PSP
-    OotPspFrameInterpolation_Record(dest, src->mf, __builtin_return_address(0));
-#endif
-#if defined(TARGET_PSP) || defined(PLATFORM_PSP)
+    OotPsp_GuMtxF2LWithSite(src->mf, dest, __builtin_return_address(0));
+#elif defined(TARGET_PSP)
     /*
      * The original halfword stores rely on the N64's big-endian Mtx layout.
      * Build the paired fixed-point words directly on little-endian PSP, as
@@ -1271,7 +1361,12 @@ Mtx* Matrix_MtxFToMtx(MtxF* src, Mtx* dest) {
  * @remark original name: "_Matrix_to_Mtx"
  */
 Mtx* Matrix_ToMtx(Mtx* dest) {
+#if PLATFORM_PSP
+    OotPsp_GuMtxF2LWithSite(sCurrentMatrix->mf, dest, __builtin_return_address(0));
+    return dest;
+#else
     return Matrix_MtxFToMtx(sCurrentMatrix, dest);
+#endif
 }
 
 /**
@@ -1285,8 +1380,8 @@ Mtx* Matrix_ToMtx(Mtx* dest) {
  */
 Mtx* Matrix_Finalize(GraphicsContext* gfxCtx) {
 #if PLATFORM_PSP
-    Mtx* result = Matrix_ToMtx(GRAPH_ALLOC(gfxCtx, sizeof(Mtx)));
-    OotPspFrameInterpolation_Record(result, sCurrentMatrix->mf, __builtin_return_address(0));
+    Mtx* result = GRAPH_ALLOC(gfxCtx, sizeof(Mtx));
+    OotPsp_GuMtxF2LWithSite(sCurrentMatrix->mf, result, __builtin_return_address(0));
     return result;
 #else
     return Matrix_ToMtx(GRAPH_ALLOC(gfxCtx, sizeof(Mtx)));
@@ -1305,7 +1400,13 @@ Mtx* Matrix_Finalize(GraphicsContext* gfxCtx) {
  * @remark original name unknown, likely close to "_Matrix_MtxF_to_Mtx_new"
  */
 Mtx* Matrix_MtxFToNewMtx(MtxF* src, GraphicsContext* gfxCtx) {
+#if PLATFORM_PSP
+    Mtx* result = GRAPH_ALLOC(gfxCtx, sizeof(Mtx));
+    OotPsp_GuMtxF2LWithSite(src->mf, result, __builtin_return_address(0));
+    return result;
+#else
     return Matrix_MtxFToMtx(src, GRAPH_ALLOC(gfxCtx, sizeof(Mtx)));
+#endif
 }
 
 /**
@@ -1350,9 +1451,13 @@ Mtx* Matrix_MtxFToNewMtx(MtxF* src, GraphicsContext* gfxCtx) {
 void Matrix_MultVec3f(Vec3f* src, Vec3f* dest) {
     MtxF* cmf = sCurrentMatrix;
 
+#if PLATFORM_PSP
+    OotPspVfpu_MtxFMultVec3f(cmf, src, dest);
+#else
     dest->x = cmf->xw + (cmf->xx * src->x + cmf->xy * src->y + cmf->xz * src->z);
     dest->y = cmf->yw + (cmf->yx * src->x + cmf->yy * src->y + cmf->yz * src->z);
     dest->z = cmf->zw + (cmf->zx * src->x + cmf->zy * src->y + cmf->zz * src->z);
+#endif
 }
 
 /**
@@ -1554,9 +1659,13 @@ void Matrix_MtxToMtxF(Mtx* src, MtxF* dest) {
  * @param[in] mf matrix to multiply by
  */
 void Matrix_MultVec3fExt(Vec3f* src, Vec3f* dest, MtxF* mf) {
+#if PLATFORM_PSP
+    OotPspVfpu_MtxFMultVec3f(mf, src, dest);
+#else
     dest->x = mf->xw + (mf->xx * src->x + mf->xy * src->y + mf->xz * src->z);
     dest->y = mf->yw + (mf->yx * src->x + mf->yy * src->y + mf->yz * src->z);
     dest->z = mf->zw + (mf->zx * src->x + mf->zy * src->y + mf->zz * src->z);
+#endif
 }
 
 /**
@@ -1607,6 +1716,9 @@ void Matrix_Transpose(MtxF* mf) {
  */
 void Matrix_ReplaceRotation(MtxF* mf) {
     MtxF* cmf = sCurrentMatrix;
+#if PLATFORM_PSP
+    OotPspVfpu_MtxFReplaceRotation(cmf, mf);
+#else
     f32 acc;
     f32 component;
     f32 curColNorm;
@@ -1649,6 +1761,7 @@ void Matrix_ReplaceRotation(MtxF* mf) {
     cmf->xz = mf->xz * curColNorm;
     cmf->yz = mf->yz * curColNorm;
     cmf->zz = mf->zz * curColNorm;
+#endif
 }
 
 /**
@@ -1807,8 +1920,12 @@ void Matrix_RotateAxisF(f32 angle, Vec3f* axis, MatrixMode mode) {
         if (angle != 0) {
             cmf = sCurrentMatrix;
 
+#if PLATFORM_PSP
+            OotPspVfpu_SinCos(angle, &sin, &cos);
+#else
             sin = sinf(angle);
             cos = cosf(angle);
+#endif
 
             temp1 = cmf->xx;
             temp2 = cmf->xy;
@@ -1838,8 +1955,12 @@ void Matrix_RotateAxisF(f32 angle, Vec3f* axis, MatrixMode mode) {
         cmf = sCurrentMatrix;
 
         if (angle != 0) {
+#if PLATFORM_PSP
+            OotPspVfpu_SinCos(angle, &sin, &cos);
+#else
             sin = sinf(angle);
             cos = cosf(angle);
+#endif
             versin = 1.0f - cos;
 
             cmf->xx = axis->x * axis->x * versin + cos;

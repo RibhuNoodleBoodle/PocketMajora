@@ -55,7 +55,7 @@ typedef unsigned SceSize;
 static pthread_mutex_t mutex = PTHREAD_MUTEX_INITIALIZER;
 static pthread_cond_t changed = PTHREAD_COND_INITIALIZER;
 static unsigned counts[3], semaphores, deletedSemaphores, deletedThreads;
-static int failure, createCalls, phase, logicTicks, finishes, presents;
+static int failure, createCalls, phase, logicTicks, finishes, presents, failSignal;
 static bool holdGe, holdVblank, releaseOnJoin;
 static int (*entry)(SceSize, void*);
 static SceUID sceKernelCreateSema(const char* name, int attr, int initial, int max, void* option) {
@@ -81,6 +81,7 @@ static int sceKernelWaitSema(SceUID id, int n, void* timeout) {
 }
 static int sceKernelSignalSema(SceUID id, int n) {
     assert(id > 0 && id <= 2 && n == 1);
+    if (id == 1 && failSignal) return -1;
     pthread_mutex_lock(&mutex);
     assert(counts[id] == 0);
     ++counts[id];
@@ -212,6 +213,11 @@ int main(int argc, char** argv) {
     OotPspVideoThread_Submit(gfx_scegu_complete_frame);
     OotPspVideoThread_Wait();
     assert(presents == 204);
+    // Signal failure falls back synchronously and releases the request exactly once.
+    failSignal = 1;
+    OotPspVideoThread_Submit(gfx_scegu_complete_frame);
+    assert(presents == 205 && !sFramePending);
+    failSignal = 0;
     puts("Video thread: GE/vblank overlap, ownership fence, VSync snapshot and repeated handoffs passed");
 }
 '''

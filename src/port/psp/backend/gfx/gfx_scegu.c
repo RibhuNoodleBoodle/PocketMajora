@@ -22,6 +22,9 @@
 #include <pspgu.h>
 #include <pspgum.h>
 #include <string.h>
+#if defined(MM_PSP_TRACE) && MM_PSP_TRACE
+#include "mm_psp_trace.h"
+#endif
 
 #ifndef OOT_PSP_USE_INTRAFONT
 #define OOT_PSP_USE_INTRAFONT 0
@@ -2048,6 +2051,13 @@ static void gfx_scegu_set_mode_geometry(const OotPspVideoMode *mode) {
     sBufferWidth = mode->bufferWidth;
     sScreenWidth = mode->displayWidth;
     sScreenHeight = mode->displayHeight;
+    if (mode->tvOutput && (sMaxBufferWidth == TV_BUFFER_WIDTH)) {
+        sColorPixelFormat = GU_PSM_8888;
+        sColorPixelSize = sizeof(uint32_t);
+    } else {
+        sColorPixelFormat = GU_PSM_5650;
+        sColorPixelSize = sizeof(uint16_t);
+    }
 }
 
 static bool gfx_scegu_mode_is_interlaced(const OotPspVideoMode *mode) {
@@ -2328,7 +2338,8 @@ static void gfx_scegu_init(void) {
     sceDisplaySetFrameBuf(gfx_scegu_vram_cpu_addr(sDisplayBuffer), BUF_WIDTH, sColorPixelFormat,
                           PSP_DISPLAY_SETBUF_NEXTFRAME);
 
-    void *texman_buffer;
+    void *texman_buffer = NULL;
+    bool texmanInRam = false;
 
     if (sMaxBufferWidth == TV_BUFFER_WIDTH) {
         /* Daedalus fills almost all 4 MiB of EDRAM with its 32-bit TV frame
@@ -2338,12 +2349,28 @@ static void gfx_scegu_init(void) {
          * the DVE is scanning a 720-wide framebuffer. */
         texmanSize = TEXMAN_BUFFER_SIZE;
         texman_buffer = memalign(64, texmanSize);
+        texmanInRam = (texman_buffer != NULL);
     } else {
-        texmanSize = getStaticVramBytesRemaining();
-        if (texmanSize > TEXMAN_BUFFER_SIZE) {
+        size_t edramRemaining = getStaticVramBytesRemaining();
+        size_t maxFreeRam = sceKernelMaxFreeMemSize();
+
+        /* Slim/3000 LCD mode uses 32-bit EDRAM framebuffers, leaving < 1 MiB
+         * of uncached EDRAM after frame/depth/shadow buffers, which thrashes
+         * Clock Town textures every frame. Use 3 MiB cached main RAM when
+         * extended RAM is plentiful, keeping EDRAM as PSP-1000 fallback. */
+        if ((edramRemaining < (2 * 1024 * 1024)) &&
+            (maxFreeRam >= (TEXMAN_BUFFER_SIZE + (4 * 1024 * 1024)))) {
             texmanSize = TEXMAN_BUFFER_SIZE;
+            texman_buffer = memalign(64, texmanSize);
+            texmanInRam = (texman_buffer != NULL);
         }
-        texman_buffer = getStaticVramBufferBytes(texmanSize);
+        if (texman_buffer == NULL) {
+            texmanSize = edramRemaining;
+            if (texmanSize > TEXMAN_BUFFER_SIZE) {
+                texmanSize = TEXMAN_BUFFER_SIZE;
+            }
+            texman_buffer = getStaticVramBufferBytes(texmanSize);
+        }
     }
     if (!texman_buffer) {
         char msg[32];
@@ -2355,7 +2382,7 @@ static void gfx_scegu_init(void) {
     void *texman_aligned = (void *) ((((unsigned int) texman_buffer + TEX_ALIGNMENT - 1) / TEX_ALIGNMENT) * TEX_ALIGNMENT);
     texman_reset(texman_aligned, texmanSize);
     printf("oot-psp texture cache storage=%s addr=%p size=%lu\n",
-           (sMaxBufferWidth == TV_BUFFER_WIDTH) ? "ram" : "edram", texman_aligned,
+           texmanInRam ? "ram" : "edram", texman_aligned,
            (unsigned long)texmanSize);
 
     if (mode.tvOutput) {
@@ -2487,28 +2514,151 @@ static void gfx_scegu_present_interlaced(void) {
 }
 
 static void gfx_scegu_present_triple(int vsync) {
+    const int maxPendingVblanks = 4;
     void *front = NULL;
+    void *prevDisplay;
     int width, format, i;
+    int queryOk;
+    int setResult;
+    int vblanks = 0;
+#if defined(MM_PSP_TRACE) && MM_PSP_TRACE
+    static uint16_t sTraceBufferGens[3];
+    static uint16_t sTraceNextGen;
+    MmPspTraceThreadSlot traceSlot = MmPspTrace_CurrentSlot();
+    uint16_t drawGen = 0;
+    uint16_t frontGen = 0;
+#endif
 
     /* Never overwrite a queued scanout target. With three buffers the CPU/GE
-     * can render the next frame while this one waits for the next vblank. */
+     * can render the next frame while this one waits for the next vblank.
+     * Bound the wait so a failed query or stalled display flip cannot hang. */
     if (sPendingBuffer != NULL) {
-        sceDisplayGetFrameBuf(&front, &width, &format, PSP_DISPLAY_SETBUF_IMMEDIATE);
-        while (((uintptr_t)front & 0x00FFFFFFU) != ((uintptr_t)sPendingBuffer & 0x00FFFFFFU)) {
+        queryOk = (sceDisplayGetFrameBuf(&front, &width, &format, PSP_DISPLAY_SETBUF_IMMEDIATE) >= 0) &&
+                  (front != NULL);
+#if defined(MM_PSP_TRACE) && MM_PSP_TRACE
+        if (queryOk) {
+            for (i = 0; i < sColorBufferCount; i++) {
+                if (((uintptr_t)sColorBuffers[i] & 0x00FFFFFFU) == ((uintptr_t)front & 0x00FFFFFFU)) {
+                    frontGen = sTraceBufferGens[i];
+                    break;
+                }
+            }
+        }
+        MmPspTrace_Record(traceSlot, MM_TRACE_EVT_FRONT_OBSERVED, MM_TRACE_FLAG_INSTANT,
+                          (uint32_t)((uintptr_t)front & 0x00FFFFFFU), frontGen, (uint64_t)(uintptr_t)sPendingBuffer, 0);
+#endif
+        while (vblanks < maxPendingVblanks &&
+               (!queryOk || ((uintptr_t)front & 0x00FFFFFFU) != ((uintptr_t)sPendingBuffer & 0x00FFFFFFU))) {
+#if defined(MM_PSP_TRACE) && MM_PSP_TRACE
+            uint64_t vbStartUs = MmPspTrace_BeginSpan(traceSlot, MM_TRACE_EVT_VBLANK_WAIT, 0,
+                                                      (uint32_t)((uintptr_t)sPendingBuffer & 0x00FFFFFFU), 0,
+                                                      (uint64_t)(uintptr_t)front, 0);
+#endif
             sceDisplayWaitVblankStart();
-            sceDisplayGetFrameBuf(&front, &width, &format, PSP_DISPLAY_SETBUF_IMMEDIATE);
+            vblanks++;
+#if defined(MM_PSP_TRACE) && MM_PSP_TRACE
+            MmPspTrace_EndSpan(traceSlot, MM_TRACE_EVT_VBLANK_WAIT, 0,
+                               (uint32_t)((uintptr_t)sPendingBuffer & 0x00FFFFFFU), 0, vbStartUs,
+                               (uint64_t)(uintptr_t)front, 0);
+#endif
+            queryOk = (sceDisplayGetFrameBuf(&front, &width, &format, PSP_DISPLAY_SETBUF_IMMEDIATE) >= 0) &&
+                      (front != NULL);
+#if defined(MM_PSP_TRACE) && MM_PSP_TRACE
+            frontGen = 0;
+            if (queryOk) {
+                for (i = 0; i < sColorBufferCount; i++) {
+                    if (((uintptr_t)sColorBuffers[i] & 0x00FFFFFFU) == ((uintptr_t)front & 0x00FFFFFFU)) {
+                        frontGen = sTraceBufferGens[i];
+                        break;
+                    }
+                }
+            }
+            MmPspTrace_Record(traceSlot, MM_TRACE_EVT_FRONT_OBSERVED, MM_TRACE_FLAG_INSTANT,
+                              (uint32_t)((uintptr_t)front & 0x00FFFFFFU), frontGen, (uint64_t)(uintptr_t)sPendingBuffer, 1);
+#endif
+        }
+        if (!queryOk || ((uintptr_t)front & 0x00FFFFFFU) != ((uintptr_t)sPendingBuffer & 0x00FFFFFFU)) {
+            /* Ownership did not transition to sPendingBuffer within deadline:
+             * drain GE and re-anchor display ownership before releasing buffers. */
+            sceGuSync(GU_SYNC_FINISH, GU_SYNC_WHAT_DONE);
+            if (!queryOk &&
+                sceDisplaySetFrameBuf(gfx_scegu_vram_cpu_addr(sDisplayBuffer), BUF_WIDTH, sColorPixelFormat,
+                                      PSP_DISPLAY_SETBUF_IMMEDIATE) >= 0) {
+                front = sDisplayBuffer;
+                queryOk = 1;
+            }
         }
         sPendingBuffer = NULL;
     }
-    sceDisplayGetFrameBuf(&front, &width, &format, PSP_DISPLAY_SETBUF_IMMEDIATE);
-    sceDisplaySetFrameBuf(gfx_scegu_vram_cpu_addr(sDrawBuffer), BUF_WIDTH, sColorPixelFormat,
-                          vsync ? PSP_DISPLAY_SETBUF_NEXTFRAME : PSP_DISPLAY_SETBUF_IMMEDIATE);
+
+    queryOk = (sceDisplayGetFrameBuf(&front, &width, &format, PSP_DISPLAY_SETBUF_IMMEDIATE) >= 0) &&
+              (front != NULL);
+#if defined(MM_PSP_TRACE) && MM_PSP_TRACE
+    frontGen = 0;
+    if (queryOk) {
+        for (i = 0; i < sColorBufferCount; i++) {
+            if (((uintptr_t)sColorBuffers[i] & 0x00FFFFFFU) == ((uintptr_t)front & 0x00FFFFFFU)) {
+                frontGen = sTraceBufferGens[i];
+                break;
+            }
+        }
+    }
+    MmPspTrace_Record(traceSlot, MM_TRACE_EVT_FRONT_OBSERVED, MM_TRACE_FLAG_INSTANT,
+                      (uint32_t)((uintptr_t)front & 0x00FFFFFFU), frontGen, (uint64_t)(uintptr_t)sDrawBuffer, 2);
+    sTraceNextGen++;
+    if (sTraceNextGen == 0) {
+        sTraceNextGen = 1;
+    }
+    drawGen = sTraceNextGen;
+    for (i = 0; i < sColorBufferCount; i++) {
+        if (sColorBuffers[i] == sDrawBuffer) {
+            sTraceBufferGens[i] = drawGen;
+            break;
+        }
+    }
+#endif
+    setResult = sceDisplaySetFrameBuf(gfx_scegu_vram_cpu_addr(sDrawBuffer), BUF_WIDTH, sColorPixelFormat,
+                                      vsync ? PSP_DISPLAY_SETBUF_NEXTFRAME : PSP_DISPLAY_SETBUF_IMMEDIATE);
+    if (setResult < 0) {
+        /* Flip rejected: retain current sDisplayBuffer ownership and do not
+         * advance sPendingBuffer or recycle any live front/display buffer. */
+        sceGuSync(GU_SYNC_FINISH, GU_SYNC_WHAT_DONE);
+        sPendingBuffer = NULL;
+        if (!queryOk) {
+            queryOk = (sceDisplayGetFrameBuf(&front, &width, &format, PSP_DISPLAY_SETBUF_IMMEDIATE) >= 0) &&
+                      (front != NULL);
+        }
+        for (i = 0; i < sColorBufferCount; i++) {
+            if (sColorBuffers[i] != sDisplayBuffer &&
+                (!queryOk || ((uintptr_t)sColorBuffers[i] & 0x00FFFFFFU) != ((uintptr_t)front & 0x00FFFFFFU))) {
+                sDrawBuffer = sColorBuffers[i];
+                break;
+            }
+        }
+        return;
+    }
+#if defined(MM_PSP_TRACE) && MM_PSP_TRACE
+    MmPspTrace_Record(traceSlot, MM_TRACE_EVT_PRESENT_QUEUED, MM_TRACE_FLAG_INSTANT,
+                      (uint32_t)((uintptr_t)sDrawBuffer & 0x00FFFFFFU), drawGen, (uint64_t)vsync, 3);
+#endif
+    prevDisplay = sDisplayBuffer;
     sDisplayBuffer = sDrawBuffer;
     sPendingBuffer = vsync ? sDrawBuffer : NULL;
     for (i = 0; i < sColorBufferCount; i++) {
-        if (sColorBuffers[i] != sDisplayBuffer && ((uintptr_t)sColorBuffers[i] & 0x00FFFFFFU) != ((uintptr_t)front & 0x00FFFFFFU)) {
+        if (sColorBuffers[i] != sDisplayBuffer && sColorBuffers[i] != sPendingBuffer &&
+            (queryOk
+                 ? (((uintptr_t)sColorBuffers[i] & 0x00FFFFFFU) != ((uintptr_t)front & 0x00FFFFFFU))
+                 : (sColorBuffers[i] != prevDisplay))) {
             sDrawBuffer = sColorBuffers[i];
             break;
+        }
+    }
+    if (sDrawBuffer == sDisplayBuffer || sDrawBuffer == sPendingBuffer) {
+        for (i = 0; i < sColorBufferCount; i++) {
+            if (sColorBuffers[i] != sDisplayBuffer && sColorBuffers[i] != sPendingBuffer) {
+                sDrawBuffer = sColorBuffers[i];
+                break;
+            }
         }
     }
 }
@@ -2518,14 +2668,36 @@ static int sFrameVSync;
 
 static void gfx_scegu_complete_frame(void) {
     void *previousDrawBuffer = sDrawBuffer;
+#if defined(MM_PSP_TRACE) && MM_PSP_TRACE
+    MmPspTraceThreadSlot traceSlot = MmPspTrace_CurrentSlot();
+    uint16_t traceFlags = (traceSlot == MM_TRACE_THREAD_MAIN) ? MM_TRACE_FLAG_SYNC_FALLBACK : 0;
+    uint64_t geStartUs = MmPspTrace_BeginSpan(traceSlot, MM_TRACE_EVT_GE_SYNC, traceFlags,
+                                              (uint32_t)(uintptr_t)previousDrawBuffer, 0,
+                                              (uint64_t)sColorBufferCount, (uint64_t)sFrameVSync);
+#endif
 
     sceGuSync(GU_SYNC_FINISH, GU_SYNC_WHAT_DONE);
+#if defined(MM_PSP_TRACE) && MM_PSP_TRACE
+    MmPspTrace_EndSpan(traceSlot, MM_TRACE_EVT_GE_SYNC, traceFlags,
+                       (uint32_t)(uintptr_t)previousDrawBuffer, 0, geStartUs,
+                       (uint64_t)sColorBufferCount, (uint64_t)sFrameVSync);
+#endif
     if (sColorBufferCount == 3) {
         gfx_scegu_present_triple(sFrameVSync);
         return;
     }
     if (sFrameVSync) {
+#if defined(MM_PSP_TRACE) && MM_PSP_TRACE
+        uint64_t vbStartUs = MmPspTrace_BeginSpan(traceSlot, MM_TRACE_EVT_VBLANK_WAIT, traceFlags,
+                                                  (uint32_t)(uintptr_t)previousDrawBuffer, 0,
+                                                  (uint64_t)sColorBufferCount, 0);
+#endif
         sceDisplayWaitVblankStart();
+#if defined(MM_PSP_TRACE) && MM_PSP_TRACE
+        MmPspTrace_EndSpan(traceSlot, MM_TRACE_EVT_VBLANK_WAIT, traceFlags,
+                           (uint32_t)(uintptr_t)previousDrawBuffer, 0, vbStartUs,
+                           (uint64_t)sColorBufferCount, 0);
+#endif
     }
     if (sInterlacedOutput) {
         gfx_scegu_present_interlaced();
@@ -2533,6 +2705,15 @@ static void gfx_scegu_complete_frame(void) {
         sDrawBuffer = sceGuSwapBuffers();
         sDisplayBuffer = previousDrawBuffer;
     }
+#if defined(MM_PSP_TRACE) && MM_PSP_TRACE
+    MmPspTrace_Record(traceSlot, MM_TRACE_EVT_PRESENT_QUEUED,
+                      (uint16_t)(traceFlags | MM_TRACE_FLAG_INSTANT),
+                      (uint32_t)(uintptr_t)sDisplayBuffer, 0, (uint64_t)sFrameVSync,
+                      (uint64_t)sColorBufferCount);
+    MmPspTrace_Record(traceSlot, MM_TRACE_EVT_FRONT_OBSERVED,
+                      (uint16_t)(traceFlags | MM_TRACE_FLAG_INSTANT),
+                      (uint32_t)(uintptr_t)sDisplayBuffer, 0, (uint64_t)sColorBufferCount, 2);
+#endif
 }
 
 static void gfx_scegu_end_frame(void) {

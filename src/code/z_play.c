@@ -22,6 +22,7 @@ u8 sMotionBlurStatus;
 #include "sys_cfb.h"
 #include "attributes.h"
 #if PLATFORM_PSP
+#include "mm_psp_trace.h"
 #include "oot_psp_gfx_ext.h"
 #include "oot_psp_renderer.h"
 #include "oot_psp_frame_interpolation.h"
@@ -1017,6 +1018,15 @@ void Play_UpdateMain(PlayState* this) {
                         this->envCtx.fillScreen = false;
                     }
                 } else {
+#if PLATFORM_PSP && MM_PSP_TRACE
+                    u64 aiStartUs = 0;
+                    s32 aiScoped = MmPspTrace_ScopeEnabled(MM_TRACE_SCOPE_AI_COL_ANIM);
+                    if (aiScoped) {
+                        aiStartUs = MmPspTrace_BeginSpan(MM_TRACE_THREAD_MAIN, MM_TRACE_EVT_AI_COL_ANIM,
+                                                         MM_TRACE_FLAG_SCOPED, (u32)this->gameplayFrames,
+                                                         0, (u64)this->sceneId, (u64)this->roomCtx.curRoom.num);
+                    }
+#endif
                     Room_ProcessRoomRequest(this, &this->roomCtx);
                     CollisionCheck_AT(this, &this->colChkCtx);
                     CollisionCheck_OC(this, &this->colChkCtx);
@@ -1030,6 +1040,13 @@ void Play_UpdateMain(PlayState* this) {
                     Effect_UpdateAll(this);
                     EffectSs_UpdateAll(this);
                     EffFootmark_Update(this);
+#if PLATFORM_PSP && MM_PSP_TRACE
+                    if (aiScoped) {
+                        MmPspTrace_EndSpan(MM_TRACE_THREAD_MAIN, MM_TRACE_EVT_AI_COL_ANIM,
+                                           MM_TRACE_FLAG_SCOPED, (u32)this->gameplayFrames, 0, aiStartUs,
+                                           (u64)this->sceneId, (u64)this->roomCtx.curRoom.num);
+                    }
+#endif
                 }
             } else {
                 Rumble_SetUpdateEnabled(false);
@@ -1685,6 +1702,10 @@ void Play_InitScene(PlayState* this, s32 spawn) {
 void Play_SpawnScene(PlayState* this, s32 sceneId, s32 spawn) {
     s32 pad;
     SceneTableEntry* scene = &gSceneTable[sceneId];
+#if PLATFORM_PSP && MM_PSP_TRACE
+    u64 sceneStartUs = MmPspTrace_BeginSpan(MM_TRACE_THREAD_MAIN, MM_TRACE_EVT_SCENE_INIT, 0,
+                                            (u32)sceneId, 0, (u64)spawn, 0);
+#endif
 
     scene->unk_D = 0;
     this->loadedScene = scene;
@@ -1695,6 +1716,11 @@ void Play_SpawnScene(PlayState* this, s32 sceneId, s32 spawn) {
     gSegments[0x02] = OS_K0_TO_PHYSICAL(this->sceneSegment);
     Play_InitScene(this, spawn);
     Room_SetupFirstRoom(this, &this->roomCtx);
+#if PLATFORM_PSP && MM_PSP_TRACE
+    MmPspTrace_EndSpan(MM_TRACE_THREAD_MAIN, MM_TRACE_EVT_SCENE_INIT, 0,
+                       (u32)sceneId, 0, sceneStartUs, (u64)spawn,
+                       (u64)this->roomCtx.curRoom.num);
+#endif
 }
 
 void Play_GetScreenPos(PlayState* this, Vec3f* worldPos, Vec3f* screenPos) {

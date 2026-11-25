@@ -1,5 +1,7 @@
 #if PLATFORM_PSP
 #include "mm_psp_diag_log.h"
+#include "mm_psp_trace.h"
+#include "oot_psp_asset_loader.h"
 #include "oot_psp_frame_interpolation.h"
 #endif
 /*
@@ -1172,10 +1174,36 @@ void Actor_Init(Actor* actor, PlayState* play) {
 
     ActorShape_Init(&actor->shape, 0.0f, NULL, 0.0f);
     if (Object_IsLoaded(&play->objectCtx, actor->objectSlot)) {
+#if PLATFORM_PSP && MM_PSP_TRACE
+        u64 ctorStartUs = 0;
+        s32 ctorScoped = MmPspTrace_ScopeEnabled(MM_TRACE_SCOPE_CTOR);
+        if (ctorScoped) {
+            ctorStartUs = MmPspTrace_BeginSpan(MM_TRACE_THREAD_MAIN, MM_TRACE_EVT_ACTOR_CTOR,
+                                               MM_TRACE_FLAG_SCOPED, (u32)actor->id, 0,
+                                               (u64)actor->objectSlot, (u64)(uintptr_t)actor);
+        }
+#endif
         Actor_SetObjectDependency(play, actor);
         actor->init(actor, play);
         actor->init = NULL;
+#if PLATFORM_PSP && MM_PSP_TRACE
+        if (ctorScoped) {
+            MmPspTrace_EndSpan(MM_TRACE_THREAD_MAIN, MM_TRACE_EVT_ACTOR_CTOR, MM_TRACE_FLAG_SCOPED,
+                               (u32)actor->id, 0, ctorStartUs, (u64)actor->objectSlot,
+                               (u64)(uintptr_t)actor);
+        }
+#endif
     }
+#if PLATFORM_PSP
+    else if ((actor->objectSlot >= 0) && (actor->objectSlot < play->objectCtx.numEntries) &&
+             (play->objectCtx.slots[actor->objectSlot].id < 0)) {
+        s32 objId = -play->objectCtx.slots[actor->objectSlot].id;
+        size_t objSize = gObjectTable[objId].vromEnd - gObjectTable[objId].vromStart;
+        if (objSize != 0) {
+            OotPsp_AssetPrefetch(gObjectTable[objId].vromStart, objSize, OotPsp_AssetGetStreamGeneration(), 0);
+        }
+    }
+#endif
 }
 
 void Actor_Destroy(Actor* actor, PlayState* play) {
@@ -3196,11 +3224,27 @@ void Actor_DrawAll(PlayState* play, ActorContext* actorCtx) {
                     if (Actor_AddToLensActors(play, actor)) {}
                 } else {
                     Actor_Draw(play, actor);
+#if PLATFORM_PSP && MM_PSP_TRACE
+                    if (actor->isDrawn && (play->gameplayFrames <= 2 || actor->room == play->roomCtx.curRoom.num)) {
+                        /* Lightweight first-use marker when newly active */
+                        if (actor->category != ACTORCAT_BG) {
+                            MmPspTrace_Record(MM_TRACE_THREAD_MAIN, MM_TRACE_EVT_ACTOR_FIRST_DRAW,
+                                              MM_TRACE_FLAG_INSTANT, (u32)actor->id, 0,
+                                              (u64)actor->objectSlot, (u64)play->gameplayFrames);
+                        }
+                    }
+#endif
                 }
             }
 #if PLATFORM_PSP
             else if ((play->gameplayFrames > 30) && (actor->draw != NULL) && (actor->init != NULL)) {
                 static u16 sLoggedPendingActorId = 0xFFFF;
+#if MM_PSP_TRACE
+                MmPspTrace_Record(MM_TRACE_THREAD_MAIN, MM_TRACE_EVT_ACTOR_PENDING,
+                                  MM_TRACE_FLAG_INSTANT, (u32)actor->id, 0,
+                                  (u64)actor->objectSlot, (u64)play->gameplayFrames);
+#endif
+#if defined(OOTDEBUG) || (defined(MM_PSP_TRACE) && MM_PSP_TRACE)
                 if (sLoggedPendingActorId != actor->id) {
                     sLoggedPendingActorId = actor->id;
                     MmPsp_DiagLog("actor draw skipped pending init frame=%lu actorId=0x%04x slot=%d objId=%d loaded=%d",
@@ -3208,6 +3252,7 @@ void Actor_DrawAll(PlayState* play, ActorContext* actorCtx) {
                                   play->objectCtx.slots[actor->objectSlot].id,
                                   Object_IsLoaded(&play->objectCtx, actor->objectSlot));
                 }
+#endif
             }
 #endif
 

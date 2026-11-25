@@ -65,6 +65,13 @@ int main(void) {
     for (int i=0;i<10;i++) { now+=5000; submit(); }
     assert(rendered==10 && completed==10 && swapped==10);
     for (int i=0;i<10;i++) { assert(renderTimes[i]==5000+50000U*i); assert(renderFractions[i]==1); }
+    reset(40,0,3000);
+    for (int i=0;i<10;i++) { now+=5000; submit(); }
+    assert(rendered==20 && completed==10 && swapped==10 && fraction==1);
+    for (int i=0;i<20;i++) {
+        assert(renderTimes[i]==5000+25000U*i);
+        assert(renderFractions[i]==(i%2+1)/2.0f);
+    }
     reset(60,0,3000);
     for (int i=0;i<10;i++) { now+=5000; submit(); }
     assert(rendered==30 && completed==10 && swapped==10 && fraction==1);
@@ -78,6 +85,8 @@ int main(void) {
     reset(60,0,1000); fb.updateRate=1; submit(); submit();
     assert(rendered==2 && renderTimes[1]==16666);
     // Disabled history (pause/UI) keeps its task cadence without redundant replays.
+    reset(40,0,1000); fb.updateRate=3; sample=0; submit(); submit();
+    assert(rendered==2 && renderTimes[1]==50000);
     reset(60,0,1000); fb.updateRate=3; sample=0; submit(); submit();
     assert(rendered==2 && renderTimes[1]==50000);
     // Non-presenting tasks neither wait nor advance the presentation clock.
@@ -101,7 +110,7 @@ int main(void) {
     now+=0x90000000U;before=rendered;u32 wakeTime=now;
     SchedPsp_ResetGfxPacing();submit();
     assert(renderTimes[before]==wakeTime && renderTimes[before+1]-wakeTime==16666);
-    puts("Frame pacing: 20/60 Hz, task cadence, completion, overruns, timer wrap and UI fallback passed");
+    puts("Frame pacing: 20/40/60 Hz, task cadence, completion, overruns, timer wrap and UI fallback passed");
 }
 '''
 with tempfile.TemporaryDirectory(prefix='oot-pacing-') as directory:

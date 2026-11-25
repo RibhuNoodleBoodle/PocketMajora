@@ -696,6 +696,10 @@ void texman_bind_tex(unsigned int num) {
         psp_tex_bound = num;
         return;
     }
+    if (sPspTexGuBound == num) {
+        psp_tex_bound = num;
+        return;
+    }
     size = texman_storage_size(current->width, current->height, current->type);
 
     if ((current->location == NULL) || (size == 0)) {
@@ -710,11 +714,6 @@ void texman_bind_tex(unsigned int num) {
     if ((location > end) || (size > (end - location))) {
         texman_log_bad_state("bind texture outside cache", num, current->width, current->height,
                              current->type, size);
-        return;
-    }
-
-    if (sPspTexGuBound == num) {
-        psp_tex_bound = num;
         return;
     }
 

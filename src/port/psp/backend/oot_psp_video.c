@@ -170,7 +170,13 @@ void OotPspVideo_Init(const char* executablePath) {
             sOotPspVideoAspect = (OotPspVideo_StrIcmp(value, "4:3") == 0) ? OOT_PSP_VIDEO_ASPECT_4_3
                                                                           : OOT_PSP_VIDEO_ASPECT_16_9;
         } else if (OotPspVideo_StrIcmp(key, "fps") == 0) {
-            OotPspVideo_SetFrameRate(OotPspVideo_StrIcmp(value, "60") == 0 ? 60 : 20);
+            if (OotPspVideo_StrIcmp(value, "60") == 0) {
+                OotPspVideo_SetFrameRate(60);
+            } else if (OotPspVideo_StrIcmp(value, "40") == 0) {
+                OotPspVideo_SetFrameRate(40);
+            } else {
+                OotPspVideo_SetFrameRate(20);
+            }
         } else if (OotPspVideo_StrIcmp(key, "vsync") == 0) {
             OotPspVideo_SetVSyncEnabled((OotPspVideo_StrIcmp(value, "off") != 0) &&
                                       (OotPspVideo_StrIcmp(value, "false") != 0) &&
@@ -293,7 +299,15 @@ int OotPspVideo_GetFrameRate(void) {
 }
 
 void OotPspVideo_SetFrameRate(int fps) {
-    sOotPspVideoFrameRate = (fps == 60) ? 60 : 20;
+    sOotPspVideoFrameRate = (fps == 60) ? 60 : ((fps == 40) ? 40 : 20);
+}
+
+void OotPspVideo_CycleFrameRate(int direction) {
+    if (direction < 0) {
+        sOotPspVideoFrameRate = (sOotPspVideoFrameRate == 20) ? 60 : ((sOotPspVideoFrameRate == 60) ? 40 : 20);
+    } else {
+        sOotPspVideoFrameRate = (sOotPspVideoFrameRate == 20) ? 40 : ((sOotPspVideoFrameRate == 40) ? 60 : 20);
+    }
 }
 
 int OotPspVideo_IsVSyncEnabled(void) {

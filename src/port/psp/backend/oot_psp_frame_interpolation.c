@@ -77,8 +77,9 @@ void OotPspFrameInterpolation_Begin(const void* state, int scene, int room, int 
     current->scene = scene;
     current->room = room;
     current->camera = camera;
-    memset(current->addresses, 0xff, sizeof(current->addresses));
-    memset(current->buckets, 0xff, sizeof(current->buckets));
+    if (enabled) {
+        memset(current->addresses, 0xff, sizeof(current->addresses));
+    }
     sRecording = enabled;
     sWorldScope = 0;
     sIdentity = state;
@@ -110,6 +111,9 @@ void OotPspFrameInterpolation_ForgetIdentity(const void* identity) {
 
     /* An actor allocation can be reused for a different actor in the same tick. */
     for (pool = 0; pool < 2; pool++) {
+        if (sHistory[pool].count == 0 && sHistory[pool].groupCount == 0) {
+            continue;
+        }
         for (i = 0; i < sHistory[pool].count; i++) {
             if (sHistory[pool].matrices[i].identity == identity) {
                 sHistory[pool].matrices[i].identity = NULL;
@@ -168,6 +172,8 @@ static int FindGroup(FrameHistory* history, const void* identity, const void* si
     return NO_INDEX;
 }
 
+static int CanBlend(const float a[4][4], const float b[4][4]);
+
 void OotPspFrameInterpolation_End(void) {
     FrameHistory* current = &sHistory[sCurrent];
     FrameHistory* previous = &sHistory[sCurrent ^ 1];
@@ -180,6 +186,7 @@ void OotPspFrameInterpolation_End(void) {
     if (!current->valid) {
         return;
     }
+    memset(current->buckets, 0xff, sizeof(current->buckets));
     for (i = 0; i < current->count; i++) {
         MatrixRecord* matrix = &current->matrices[i];
         int index = FindGroup(current, matrix->identity, matrix->site);
@@ -214,7 +221,9 @@ void OotPspFrameInterpolation_End(void) {
             int a = group->head;
             int b = previous->groups[oldGroup].head;
             while (a != NO_INDEX) {
-                current->matrices[a].previous = b;
+                if (CanBlend(previous->matrices[b].value, current->matrices[a].value)) {
+                    current->matrices[a].previous = b;
+                }
                 a = current->matrices[a].groupNext;
                 b = previous->matrices[b].groupNext;
             }
@@ -279,12 +288,49 @@ void OotPspFrameInterpolation_Resolve(const void* address, float value[4][4]) {
         return;
     }
     previous = sHistory[sCurrent ^ 1].matrices[current->matrices[index].previous].value;
-    if (!CanBlend(previous, value)) {
-        return;
+#if defined(TARGET_PSP)
+    {
+        union {
+            float f;
+            uint32_t u;
+        } frac = { sFraction };
+        (void)row;
+        (void)column;
+        __asm__ volatile(
+            "mtv %[frac], S200\n"
+            "ulv.q C000, 0(%[prev])\n"
+            "ulv.q C010, 16(%[prev])\n"
+            "ulv.q C020, 32(%[prev])\n"
+            "ulv.q C030, 48(%[prev])\n"
+            "ulv.q C100, 0(%[val])\n"
+            "ulv.q C110, 16(%[val])\n"
+            "ulv.q C120, 32(%[val])\n"
+            "ulv.q C130, 48(%[val])\n"
+            "vsub.q C100, C100, C000\n"
+            "vsub.q C110, C110, C010\n"
+            "vsub.q C120, C120, C020\n"
+            "vsub.q C130, C130, C030\n"
+            "vscl.q C100, C100, S200\n"
+            "vscl.q C110, C110, S200\n"
+            "vscl.q C120, C120, S200\n"
+            "vscl.q C130, C130, S200\n"
+            "vadd.q C000, C000, C100\n"
+            "vadd.q C010, C010, C110\n"
+            "vadd.q C020, C020, C120\n"
+            "vadd.q C030, C030, C130\n"
+            "usv.q C000, 0(%[val])\n"
+            "usv.q C010, 16(%[val])\n"
+            "usv.q C020, 32(%[val])\n"
+            "usv.q C030, 48(%[val])\n"
+            :
+            : [prev] "r"(previous), [val] "r"(value), [frac] "r"(frac.u)
+            : "memory");
     }
+#else
     for (row = 0; row < 4; row++) {
         for (column = 0; column < 4; column++) {
             value[row][column] = previous[row][column] + (value[row][column] - previous[row][column]) * sFraction;
         }
     }
+#endif
 }

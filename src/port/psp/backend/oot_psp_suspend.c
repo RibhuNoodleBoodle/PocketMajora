@@ -9,6 +9,7 @@
 #include "oot_psp_audio_backend.h"
 #include "oot_psp_renderer.h"
 #include "oot_psp_wake_trace.h"
+#include "mm_psp_trace.h"
 
 static volatile int sRequested;
 static volatile int sInProgress;
@@ -172,6 +173,11 @@ void OotPspSuspend_Poll(void) {
     while (!OotPspAudioBackend_Resume(didSleep)) {
         OotPspSuspend_WaitForRetry(OotPspAudioBackend_GetSuspendError());
     }
+#if defined(MM_PSP_TRACE) && MM_PSP_TRACE
+    if (didSleep) {
+        MmPspTrace_OnWake();
+    }
+#endif
 #if OOT_PSP_WAKE_DIAGNOSTICS
     if (didSleep) {
         OotPspWakeTrace_Checkpoint("me_restarted");

@@ -10,6 +10,7 @@
 #include "oot_psp_audio_backend.h"
 #include "oot_psp_memory.h"
 #include "mm_psp_diag_log.h"
+#include "mm_psp_trace.h"
 #include "padmgr.h"
 #include "PR/os_internal_flash.h"
 #include "PR/os_voice.h"
@@ -88,6 +89,7 @@ static SceUID sMmPspRendererBlockIds[MM_PSP_RENDERER_BLOCK_COUNT] = { -1, -1, -1
 static size_t sMmPspRendererBlockCount;
 static MmPspAssetCacheBlock sMmPspAssetCacheBlocks[MM_PSP_ASSET_CACHE_BLOCK_COUNT];
 static u8 sMmPspFlash[MM_PSP_FLASH_SIZE] __attribute__((aligned(64)));
+static u8 sMmPspFlashStaging[MM_PSP_FLASH_SIZE] __attribute__((aligned(64)));
 static s32 sMmPspFlashInitialized;
 static s32 sMmPspFlashAsyncResult;
 static s32 sMmPspFlashResultPending;
@@ -187,39 +189,79 @@ static const char* MmPsp_GetSavePath(char* buffer, size_t bufferSize) {
     return OotPsp_ResolveRootPath(MM_PSP_SAVE_PATH, buffer, bufferSize);
 }
 
-static void MmPsp_LoadFlash(void) {
-    char pathBuffer[384];
-    const char* path = MmPsp_GetSavePath(pathBuffer, sizeof(pathBuffer));
-    SceUID fd = sceIoOpen(path, PSP_O_RDONLY, 0);
-    u8* output = sMmPspFlash;
-    size_t remaining = sizeof(sMmPspFlash);
+static s32 MmPsp_FormatSaveSidecarPath(const char* livePath, const char* suffix, char* out, size_t outSize) {
+    int written;
 
-    memset(sMmPspFlash, 0xFF, sizeof(sMmPspFlash));
+    if ((livePath == NULL) || (suffix == NULL) || (out == NULL) || (outSize == 0)) {
+        return -1;
+    }
+    written = snprintf(out, outSize, "%s%s", livePath, suffix);
+    if ((written < 0) || ((size_t)written >= outSize)) {
+        return -1;
+    }
+    return 0;
+}
+
+static s32 MmPsp_SavePathExists(const char* path) {
+    SceUID fd = sceIoOpen(path, PSP_O_RDONLY, 0);
+
     if (fd < 0) {
-        printf("mm-psp save not found path=%s err=%d\n", path, (int)fd);
+        return 0;
+    }
+    sceIoClose(fd);
+    return 1;
+}
+
+static void MmPsp_SyncSaveDevice(const char* path) {
+    if (path == NULL) {
         return;
+    }
+    if (strncmp(path, "ms0:", 4) == 0) {
+        (void)sceIoSync("ms0:", 0);
+    } else if (strncmp(path, "ef0:", 4) == 0) {
+        (void)sceIoSync("ef0:", 0);
+    }
+}
+
+static s32 MmPsp_ReadExactSaveFile(const char* path, u8* dst, size_t expectedSize, size_t* bytesReadOut) {
+    SceUID fd = sceIoOpen(path, PSP_O_RDONLY, 0);
+    u8* output = dst;
+    size_t remaining = expectedSize;
+
+    if (bytesReadOut != NULL) {
+        *bytesReadOut = 0;
+    }
+    if (fd < 0) {
+        return -1;
     }
 
     while (remaining != 0) {
         SceSize chunk = remaining > MM_PSP_SAVE_IO_CHUNK_SIZE ? MM_PSP_SAVE_IO_CHUNK_SIZE : (SceSize)remaining;
         SceSSize count = sceIoRead(fd, output, chunk);
 
-        if (count <= 0) {
+        if (count < 0) {
+            sceIoClose(fd);
+            return -1;
+        }
+        if (count == 0) {
             break;
         }
         output += count;
         remaining -= (size_t)count;
     }
-    sceIoClose(fd);
-    printf("mm-psp save loaded path=%s size=%lu\n", path, (unsigned long)(sizeof(sMmPspFlash) - remaining));
+    if (sceIoClose(fd) < 0) {
+        return -1;
+    }
+    if (bytesReadOut != NULL) {
+        *bytesReadOut = expectedSize - remaining;
+    }
+    return (remaining == 0) ? 0 : -1;
 }
 
-static s32 MmPsp_FlushFlash(void) {
-    char pathBuffer[384];
-    const char* path = MmPsp_GetSavePath(pathBuffer, sizeof(pathBuffer));
+static s32 MmPsp_WriteExactSaveFile(const char* path, const u8* src, size_t len) {
     SceUID fd = sceIoOpen(path, PSP_O_WRONLY | PSP_O_CREAT | PSP_O_TRUNC, 0777);
-    const u8* input = sMmPspFlash;
-    size_t remaining = sizeof(sMmPspFlash);
+    const u8* input = src;
+    size_t remaining = len;
 
     if (fd < 0) {
         printf("mm-psp save open failed path=%s err=%d\n", path, (int)fd);
@@ -231,13 +273,98 @@ static s32 MmPsp_FlushFlash(void) {
         SceSSize count = sceIoWrite(fd, input, chunk);
 
         if (count <= 0) {
-            sceIoClose(fd);
+            (void)sceIoClose(fd);
+            (void)sceIoRemove(path);
             return -1;
         }
         input += count;
         remaining -= (size_t)count;
     }
-    sceIoClose(fd);
+    if (sceIoClose(fd) < 0) {
+        (void)sceIoRemove(path);
+        return -1;
+    }
+    return 0;
+}
+
+static void MmPsp_LoadFlash(void) {
+    char pathBuffer[384];
+    char tmpBuffer[400];
+    char bakBuffer[400];
+    const char* path = MmPsp_GetSavePath(pathBuffer, sizeof(pathBuffer));
+    size_t readSize = 0;
+
+    memset(sMmPspFlash, 0xFF, sizeof(sMmPspFlash));
+    if (MmPsp_ReadExactSaveFile(path, sMmPspFlash, sizeof(sMmPspFlash), &readSize) == 0) {
+        if (MmPsp_FormatSaveSidecarPath(path, ".tmp", tmpBuffer, sizeof(tmpBuffer)) == 0 &&
+            MmPsp_SavePathExists(tmpBuffer)) {
+            (void)sceIoRemove(tmpBuffer);
+        }
+        printf("mm-psp save loaded path=%s size=%lu\n", path, (unsigned long)readSize);
+        return;
+    }
+
+    memset(sMmPspFlash, 0xFF, sizeof(sMmPspFlash));
+    if ((MmPsp_FormatSaveSidecarPath(path, ".bak", bakBuffer, sizeof(bakBuffer)) == 0) &&
+        (MmPsp_ReadExactSaveFile(bakBuffer, sMmPspFlash, sizeof(sMmPspFlash), &readSize) == 0)) {
+        if (MmPsp_FormatSaveSidecarPath(path, ".tmp", tmpBuffer, sizeof(tmpBuffer)) == 0 &&
+            MmPsp_WriteExactSaveFile(tmpBuffer, sMmPspFlash, sizeof(sMmPspFlash)) == 0) {
+            if (MmPsp_SavePathExists(path)) {
+                (void)sceIoRemove(path);
+            }
+            if (sceIoRename(tmpBuffer, path) < 0) {
+                (void)sceIoRemove(tmpBuffer);
+            } else {
+                MmPsp_SyncSaveDevice(path);
+            }
+        }
+        printf("mm-psp save recovered from backup path=%s size=%lu\n", bakBuffer, (unsigned long)readSize);
+        return;
+    }
+
+    memset(sMmPspFlash, 0xFF, sizeof(sMmPspFlash));
+    printf("mm-psp save not found path=%s size=%lu\n", path, (unsigned long)readSize);
+}
+
+static s32 MmPsp_CommitFlash(const u8* image) {
+    char pathBuffer[384];
+    char tmpBuffer[400];
+    char bakBuffer[400];
+    const char* path = MmPsp_GetSavePath(pathBuffer, sizeof(pathBuffer));
+    s32 liveExists;
+
+    if (image == NULL) {
+        return -1;
+    }
+    if ((MmPsp_FormatSaveSidecarPath(path, ".tmp", tmpBuffer, sizeof(tmpBuffer)) < 0) ||
+        (MmPsp_FormatSaveSidecarPath(path, ".bak", bakBuffer, sizeof(bakBuffer)) < 0)) {
+        return -1;
+    }
+    if (MmPsp_WriteExactSaveFile(tmpBuffer, image, sizeof(sMmPspFlash)) < 0) {
+        return -1;
+    }
+
+    liveExists = MmPsp_SavePathExists(path);
+    if (liveExists) {
+        if (MmPsp_SavePathExists(bakBuffer) && (sceIoRemove(bakBuffer) < 0)) {
+            (void)sceIoRemove(tmpBuffer);
+            return -1;
+        }
+        if (sceIoRename(path, bakBuffer) < 0) {
+            (void)sceIoRemove(tmpBuffer);
+            return -1;
+        }
+    }
+
+    if (sceIoRename(tmpBuffer, path) < 0) {
+        if (liveExists) {
+            (void)sceIoRename(bakBuffer, path);
+        }
+        (void)sceIoRemove(tmpBuffer);
+        return -1;
+    }
+
+    MmPsp_SyncSaveDevice(path);
     return 0;
 }
 
@@ -435,7 +562,11 @@ void* Graph_Alloc(GraphicsContext* gfxCtx, size_t size) {
 }
 
 static s32 MmPsp_DmaReadInternal(void* ram, uintptr_t vrom, size_t size, s32 audioRead) {
-    s32 status = audioRead ? OotPsp_AssetReadAudio(ram, vrom, size) : OotPsp_AssetRead(ram, vrom, size);
+    s32 status = audioRead ? ((OotPspAudioBackend_NeedsRefillUrgently() ||
+                               OotPspAudioBackend_NeedsRefillDuringIo())
+                                  ? OotPsp_AssetReadAudioUrgent(ram, vrom, size)
+                                  : OotPsp_AssetReadAudio(ram, vrom, size))
+                           : OotPsp_AssetRead(ram, vrom, size);
 
     if (status == OOT_PSP_ASSET_READ_OK) {
         return 0;
@@ -503,13 +634,20 @@ s32 DmaMgr_AudioDmaHandler(OSPiHandle* pihandle, OSIoMesg* mb, s32 direction) {
 }
 
 const char* func_800809F4(uintptr_t vrom) {
-    size_t i;
+    size_t left = 0;
+    size_t right = gOotPspExternalAssetCount;
     uintptr_t normalized = OotPsp_NormalizeVrom(vrom);
 
-    for (i = 0; i < gOotPspExternalAssetCount; i++) {
-        if ((normalized >= gOotPspExternalAssets[i].vromStart) &&
-            (normalized < gOotPspExternalAssets[i].vromEnd)) {
-            return gOotPspExternalAssets[i].name;
+    while (left < right) {
+        size_t mid = left + ((right - left) / 2);
+        const OotPspExternalAsset* asset = &gOotPspExternalAssets[mid];
+
+        if (normalized < asset->vromStart) {
+            right = mid;
+        } else if (normalized >= asset->vromEnd) {
+            left = mid + 1;
+        } else {
+            return asset->name;
         }
     }
     return NULL;
@@ -530,6 +668,13 @@ static void MmPsp_ReadController(Input* inputs) {
     input->rel.button = (input->cur.button ^ input->prev.button) & input->prev.button;
     input->rel.stick_x = input->cur.stick_x;
     input->rel.stick_y = input->cur.stick_y;
+#if defined(MM_PSP_TRACE) && MM_PSP_TRACE
+    if ((input->press.button != 0) || (input->rel.button != 0)) {
+        MmPspTrace_Record(MM_TRACE_THREAD_MAIN, MM_TRACE_EVT_INPUT_EDGE, MM_TRACE_FLAG_INSTANT,
+                          (uint32_t)input->cur.button, 0,
+                          (uint64_t)input->press.button, (uint64_t)input->rel.button);
+    }
+#endif
     PadUtils_UpdateRelXY(input);
     memset(&inputs[1], 0, sizeof(Input) * (MAXCONTROLLERS - 1));
     gPadMgr.inputs[0] = *input;
@@ -719,8 +864,12 @@ void SysFlashrom_WriteAsync(void* addr, u32 pageNum, u32 pageCount) {
     sMmPspFlashResultPending = false;
     if (sMmPspFlashInitialized && (addr != NULL) && (offset <= sizeof(sMmPspFlash)) &&
         (size <= sizeof(sMmPspFlash) - offset)) {
-        memcpy(&sMmPspFlash[offset], addr, size);
-        sMmPspFlashAsyncResult = MmPsp_FlushFlash();
+        memcpy(sMmPspFlashStaging, sMmPspFlash, sizeof(sMmPspFlash));
+        memcpy(&sMmPspFlashStaging[offset], addr, size);
+        sMmPspFlashAsyncResult = MmPsp_CommitFlash(sMmPspFlashStaging);
+        if (sMmPspFlashAsyncResult == 0) {
+            memcpy(&sMmPspFlash[offset], addr, size);
+        }
     }
     sMmPspFlashResultPending = sMmPspFlashInitialized;
 }

@@ -10,11 +10,11 @@
 
 #pragma once
 #define TEX_ALIGNMENT (16)
-/* Texture ID 0 is reserved, and the Fast3D cache can hold 512 live texture nodes. */
-#define TEXMAN_MAX_TEXTURES 513
+/* Texture ID 0 is reserved, and the Fast3D cache can hold 1536 live texture nodes. */
+#define TEXMAN_MAX_TEXTURES 1537
 
-/* Upper bound; gfx_scegu clamps this to the VRAM left after frame/depth buffers. */
-#define TEXMAN_BUFFER_SIZE (5 * 1024 * 1024 / 4)
+/* Upper bound (3 MiB in cached RAM on 64 MiB PSPs, or clamped to remaining EDRAM). */
+#define TEXMAN_BUFFER_SIZE (3 * 1024 * 1024)
 
 struct PSP_Texture {
     unsigned char *location;
